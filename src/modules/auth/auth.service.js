@@ -6,6 +6,9 @@
 import { prisma } from '../../config/prisma.js';
 import { hashPassword, verifyPassword } from '../../utils/password.js';
 import { issueTokens, verifyRefreshToken } from '../../utils/token.js';
+import { generateToken, sha256Hex } from '../../utils/crypto.js';
+import { sendPasswordResetEmail } from '../../utils/mailer.js';
+import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
 
 // Fields safe to return to the client (never the password hash).
@@ -89,6 +92,64 @@ export async function refresh({ refreshToken }) {
   }
 
   return { tokens: issueTokens(user) };
+}
+
+/**
+ * Start a password reset. Generates a single-use token, stores only its
+ * hash, and emails the raw token as a link. Intentionally reveals nothing
+ * about whether the email exists — the caller always returns the same
+ * response (no user enumeration).
+ */
+export async function requestPasswordReset({ email }) {
+  const user = await prisma.user.findFirst({
+    where: { email, isActive: true, deletedAt: null },
+    select: { id: true, email: true },
+  });
+
+  // Unknown / disabled account: do nothing, but let the caller respond
+  // identically to the success case.
+  if (!user) return;
+
+  const rawToken = generateToken(32);
+  const tokenHash = sha256Hex(rawToken);
+  const expiresAt = new Date(Date.now() + env.PASSWORD_RESET_TTL_MIN * 60_000);
+
+  // Keep at most one active reset token per user — invalidate any older ones.
+  await prisma.$transaction([
+    prisma.passwordResetToken.deleteMany({ where: { userId: user.id } }),
+    prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash, expiresAt } }),
+  ]);
+
+  const resetUrl = `${env.FRONTEND_URL}/reset-password?token=${rawToken}`;
+  await sendPasswordResetEmail(user.email, resetUrl, env.PASSWORD_RESET_TTL_MIN);
+}
+
+/**
+ * Complete a password reset. Validates the token (exists, unused, unexpired,
+ * belongs to a live account), sets the new password, and destroys every reset
+ * token for that user so the link can't be replayed.
+ */
+export async function resetPassword({ token, password }) {
+  const tokenHash = sha256Hex(token);
+
+  const record = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    include: { user: { select: { id: true, isActive: true, deletedAt: true } } },
+  });
+
+  const invalid = AppError.badRequest('This password reset link is invalid or has expired', {
+    code: 'INVALID_RESET_TOKEN',
+  });
+
+  if (!record || record.usedAt || record.expiresAt < new Date()) throw invalid;
+  if (!record.user.isActive || record.user.deletedAt) throw invalid;
+
+  const passwordHash = await hashPassword(password);
+
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
+    prisma.passwordResetToken.deleteMany({ where: { userId: record.userId } }),
+  ]);
 }
 
 /** Load the full public profile for an authenticated user. */

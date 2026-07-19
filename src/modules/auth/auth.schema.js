@@ -24,3 +24,12 @@ export const loginSchema = z.object({
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1, 'refreshToken is required'),
 });
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().trim().toLowerCase().email('A valid email is required'),
+});
+
+export const resetPasswordSchema = z.object({
+  token: z.string().trim().min(1, 'token is required'),
+  password, // same strength rules as registration
+});

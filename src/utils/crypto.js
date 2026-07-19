@@ -49,3 +49,23 @@ export function decryptToken(encryptedToken, ivHex) {
   ]);
   return plaintext.toString('utf8');
 }
+
+/**
+ * Generate a cryptographically-random URL-safe token (hex).
+ * Used for one-time secrets like password-reset links.
+ * @param {number} [bytes=32]
+ * @returns {string} hex string (2 * bytes chars)
+ */
+export function generateToken(bytes = 32) {
+  return crypto.randomBytes(bytes).toString('hex');
+}
+
+/**
+ * SHA-256 hash of a string, hex-encoded (64 chars). Used to store a
+ * one-way hash of reset tokens so the raw token never touches the DB.
+ * @param {string} input
+ * @returns {string}
+ */
+export function sha256Hex(input) {
+  return crypto.createHash('sha256').update(input).digest('hex');
+}

@@ -15,6 +15,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   API_PREFIX: z.string().default('/api/v1'),
 
+  // Public URL of the frontend — used to build links in emails
+  // (e.g. the password-reset link).
+  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+
   // Comma-separated origins -> string[]
   CORS_ORIGINS: z
     .string()
@@ -39,6 +43,9 @@ const envSchema = z.object({
     .regex(/^[0-9a-fA-F]{64}$/, 'TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)'),
 
   BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(4).max(15).default(12),
+
+  // How long a password-reset link stays valid, in minutes.
+  PASSWORD_RESET_TTL_MIN: z.coerce.number().int().positive().default(60),
 });
 
 const parsed = envSchema.safeParse(process.env);

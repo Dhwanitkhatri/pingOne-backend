@@ -89,12 +89,28 @@ Server: `http://localhost:4000` · Health: `http://localhost:4000/api/v1/health`
 
 ## Auth API (`/api/v1/auth`)
 
-| Method | Path        | Auth   | Body                                        |
-| ------ | ----------- | ------ | ------------------------------------------- |
-| POST   | `/register` | –      | `firstName, lastName, email, password`      |
-| POST   | `/login`    | –      | `email, password`                           |
-| POST   | `/refresh`  | –      | `refreshToken`                              |
-| GET    | `/me`       | Bearer | –                                           |
+| Method | Path               | Auth   | Body                                        |
+| ------ | ------------------ | ------ | ------------------------------------------- |
+| POST   | `/register`        | –      | `firstName, lastName, email, password`      |
+| POST   | `/login`           | –      | `email, password`                           |
+| POST   | `/refresh`         | –      | `refreshToken`                              |
+| POST   | `/forgot-password` | –      | `email`                                     |
+| POST   | `/reset-password`  | –      | `token, password`                           |
+| GET    | `/me`              | Bearer | –                                           |
+
+**Password reset flow**
+1. `POST /forgot-password` with the user's email. The response is **always** the same
+   (`"If an account with that email exists, …"`) so it can't be used to discover which
+   emails are registered. If the account exists, a single-use reset link is emailed:
+   `${FRONTEND_URL}/reset-password?token=<raw-token>`.
+2. Only the **SHA-256 hash** of the token is stored (`password_reset_tokens`); the raw
+   token lives only in the link. Links expire after `PASSWORD_RESET_TTL_MIN` minutes.
+3. `POST /reset-password` with `{ token, password }` sets the new password and destroys
+   every reset token for that user (single-use, no replay).
+
+> In development the reset link is printed to the server console by the dev mailer
+> (`src/utils/mailer.js`) — no email provider needed. Swap in nodemailer/SendGrid/SES
+> for production by implementing `deliver()`.
 
 **Example**
 ```bash
@@ -108,6 +124,35 @@ curl http://localhost:4000/api/v1/auth/me -H "Authorization: Bearer <accessToken
 ```
 
 Responses use a consistent shape. Errors: `{ "error": { "message", "code", "details?" } }`.
+
+---
+
+## Platform credentials API (`/api/v1/credentials`)
+
+Connect a messaging account to your PingOne profile. **All routes require a Bearer token.**
+The platform secret is AES-256-GCM encrypted before storage (`encrypted_token` + `token_iv`);
+the remaining fields are stored in the `extra_info` JSONB column. Re-connecting a platform
+updates the existing credential (one row per user per platform). Responses never include the
+secret.
+
+| Method | Path                       | Body                                                        |
+| ------ | -------------------------- | ----------------------------------------------------------- |
+| POST   | `/credentials/whatsapp`    | `accessToken`, `phoneNumberId`, `businessAccountId?`        |
+| POST   | `/credentials/telegram`    | `botToken`, `botUsername?`                                   |
+| POST   | `/credentials/google`      | `gmailAddress`, `refreshToken`, `expiresAt?`                |
+| POST   | `/credentials/sms`         | `accountSid`, `authToken`, `twilioNumber` (E.164)           |
+
+**Example**
+```bash
+curl -X POST http://localhost:4000/api/v1/credentials/telegram \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"botToken":"123456789:AAF-abc_DEF","botUsername":"mybot"}'
+```
+
+The secret persisted per platform: WhatsApp → access token · Telegram → bot token ·
+Google → OAuth **refresh** token (the short-lived access token is re-derived, not stored) ·
+Twilio → auth token.
 
 ---
 
@@ -132,7 +177,7 @@ Responses use a consistent shape. Errors: `{ "error": { "message", "code", "deta
 - [ ] Contacts + groups + platform handles CRUD
 - [ ] Templates + variables
 - [ ] Message composer + attachments
-- [ ] Platform credential storage (AES-256 encrypted — helper in `utils/crypto.js`)
+- [x] Platform credential storage (AES-256 encrypted) — WhatsApp / Telegram / Google / Twilio
 - [ ] Scheduling engine (BullMQ + Redis) with recurrence
 - [ ] Channel adapters: Gmail API, Telegram Bot API, WhatsApp (best-effort)
 - [ ] Delivery tracking + webhook status updates

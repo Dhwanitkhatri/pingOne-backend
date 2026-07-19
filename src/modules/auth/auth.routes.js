@@ -14,7 +14,13 @@ import rateLimit from 'express-rate-limit';
 import * as authController from './auth.controller.js';
 import { validate } from '../../middleware/validate.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { registerSchema, loginSchema, refreshSchema } from './auth.schema.js';
+import {
+  registerSchema,
+  loginSchema,
+  refreshSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from './auth.schema.js';
 
 const router = Router();
 
@@ -29,6 +35,18 @@ const authLimiter = rateLimit({
 router.post('/register', authLimiter, validate({ body: registerSchema }), authController.register);
 router.post('/login', authLimiter, validate({ body: loginSchema }), authController.login);
 router.post('/refresh', authLimiter, validate({ body: refreshSchema }), authController.refresh);
+router.post(
+  '/forgot-password',
+  authLimiter,
+  validate({ body: forgotPasswordSchema }),
+  authController.forgotPassword
+);
+router.post(
+  '/reset-password',
+  authLimiter,
+  validate({ body: resetPasswordSchema }),
+  authController.resetPassword
+);
 router.get('/me', authenticate, authController.me);
 
 export default router;

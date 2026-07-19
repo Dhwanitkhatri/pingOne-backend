@@ -112,6 +112,7 @@ model User {
   templates               Template[]
   messages                Message[]
   scheduledJobs           ScheduledJob[]
+  passwordResetTokens     PasswordResetToken[]
 
   @@index([email], map: "idx_users_email")
   @@map("users")
@@ -150,6 +151,24 @@ model NotificationPreference {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notification_preferences")
+}
+
+// Password reset tokens. Only the SHA-256 *hash* of the token is stored
+// (64 hex chars) — the raw token lives only in the emailed link, so a DB
+// leak can't be used to reset anyone's password. Short-lived (see
+// PASSWORD_RESET_TTL_MIN) and single-use (deleted after a successful reset).
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamp(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamp(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_prt_user_id")
+  @@map("password_reset_tokens")
 }
 
 // ============================================================
