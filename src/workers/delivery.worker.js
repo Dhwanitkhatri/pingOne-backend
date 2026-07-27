@@ -9,12 +9,12 @@
 import { Worker } from 'bullmq';
 import { connection, QUEUE_NAMES } from '../queue/bull.queue.js';
 import { prisma } from '../config/prisma.js';
-import { decryptToken } from '../utils/crypto.js';
 import { getAdapter } from '../platforms/adapter.registry.js';
 import { resolveRecipientHandle } from '../modules/scheduler/recipient-resolver.js';
 import { enqueueRetry } from '../queue/queue.service.js';
 import { lookupByCode } from '../utils/lookupCache.js';
 import { MESSAGE_STATUS } from '../constants/codes.js';
+import * as platformsService from '../modules/platforms/platforms.service.js'; // teammate's module — owns credential storage/decryption
 
 export function startDeliveryWorker() {
   const worker = new Worker(QUEUE_NAMES.DELIVERY, processDeliveryJob, { connection, concurrency: 5 });
@@ -44,17 +44,12 @@ async function processDeliveryJob(job) {
   await updateStatus(delivery, MESSAGE_STATUS.SENDING);
 
   try {
-    const credentialRow = await prisma.userPlatformCredential.findUnique({
-      where: { userId_platformId: { userId: delivery.job.userId, platformId: delivery.platformId } },
-    });
-    if (!credentialRow || !credentialRow.isActive) {
-      throw new Error(`No active ${delivery.platform.code} credential connected for this user`);
-    }
-
-    const credential = {
-      secret: decryptToken(credentialRow.encryptedToken, credentialRow.tokenIv),
-      extraInfo: credentialRow.extraInfo,
-    };
+    const credential = await platformsService.getDecryptedCredential(
+      delivery.job.userId,
+      delivery.platform.code
+    );
+    // credential = { secret, extraInfo, expiresAt } — already decrypted, matches
+    // the { secret, extraInfo } shape every adapter's send()/validate() expects.
 
     const handle = await resolveRecipientHandle(
       delivery.contactId,
