@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Platform {
@@ -68,12 +69,50 @@ model User {
   contacts                Contact[]
   messages                Message[]
   notificationPreferences NotificationPreference?
+  passwordResetTokens     PasswordResetToken[]
+  refreshTokens           RefreshToken[]
   scheduledJobs           ScheduledJob[]
   templates               Template[]
   platformCredentials     UserPlatformCredential[]
 
   @@index([email], map: "idx_users_email")
   @@map("users")
+}
+
+/// Single-use password-reset tokens. Only the SHA-256 hash of the token is
+/// stored, so a database leak can't be replayed against the reset endpoint.
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamp(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamp(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId], map: "idx_prt_user_id")
+  @@index([expiresAt], map: "idx_prt_expires_at")
+  @@map("password_reset_tokens")
+}
+
+/// Server-side refresh-token registry. Makes logout real (the token is
+/// revoked, not just dropped by the client) and lets /auth/refresh rotate:
+/// each use revokes the old token and issues a new one, so a stolen refresh
+/// token is detectable and short-lived.
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamp(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamp(6)
+  userAgent String?   @map("user_agent") @db.VarChar(255)
+  ipAddress String?   @map("ip_address") @db.VarChar(64)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId], map: "idx_rt_user_id")
+  @@index([expiresAt], map: "idx_rt_expires_at")
+  @@map("refresh_tokens")
 }
 
 model UserPlatformCredential {

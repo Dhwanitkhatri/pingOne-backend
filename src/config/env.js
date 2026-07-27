@@ -46,6 +46,32 @@ const envSchema = z.object({
 
   // How long a password-reset link stays valid, in minutes.
   PASSWORD_RESET_TTL_MIN: z.coerce.number().int().positive().default(60),
+
+  // How long an OAuth `state` value stays valid, in minutes. Short by design:
+  // it only has to survive one redirect round-trip.
+  OAUTH_STATE_TTL_MIN: z.coerce.number().int().positive().default(10),
+
+  // Where the browser lands after an OAuth callback finishes. The result is
+  // appended as query params (?platform=…&status=connected|error).
+  OAUTH_SUCCESS_REDIRECT: z.string().url().optional(),
+
+  // ---- Google / Gmail OAuth (optional) ----------------------------
+  // Leave unset to run without Google: /auth/google then returns a clear
+  // 503 instead of the app failing to boot.
+  GOOGLE_CLIENT_ID: z.string().trim().min(1).optional(),
+  GOOGLE_CLIENT_SECRET: z.string().trim().min(1).optional(),
+  GOOGLE_REDIRECT_URI: z.string().url().optional(),
+
+  // ---- Meta / WhatsApp OAuth (optional) ---------------------------
+  META_APP_ID: z.string().trim().min(1).optional(),
+  META_APP_SECRET: z.string().trim().min(1).optional(),
+  META_REDIRECT_URI: z.string().url().optional(),
+  META_API_VERSION: z.string().trim().default('v21.0'),
+  // Embedded-signup configuration id (Meta "config_id"), if you use one.
+  META_CONFIG_ID: z.string().trim().min(1).optional(),
+
+  // Max size of an uploaded contacts CSV, in megabytes.
+  CSV_MAX_UPLOAD_MB: z.coerce.number().positive().max(50).default(5),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -61,3 +87,13 @@ if (!parsed.success) {
 export const env = Object.freeze(parsed.data);
 export const isProd = env.NODE_ENV === 'production';
 export const isDev = env.NODE_ENV === 'development';
+
+// Provider availability — checked by the OAuth routes so an unconfigured
+// provider fails with an actionable 503 at request time instead of
+// preventing the whole app from starting.
+export const isGoogleOAuthConfigured = Boolean(
+  env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI
+);
+export const isMetaOAuthConfigured = Boolean(
+  env.META_APP_ID && env.META_APP_SECRET && env.META_REDIRECT_URI
+);

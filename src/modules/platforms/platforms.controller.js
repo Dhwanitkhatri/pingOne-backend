@@ -1,11 +1,16 @@
 // ============================================================
-// Credentials controllers — one per platform. Thin: validate (via
-// middleware) -> call service -> return the stored credential.
-// req.user is guaranteed by the authenticate middleware on these routes.
+// Platform credential controllers — one per platform, plus list and
+// disconnect. Thin: validate (via middleware) -> call service -> return
+// the stored credential. req.user is guaranteed by `authenticate`.
 // ============================================================
 
-import * as service from './credentials.service.js';
+import * as service from './platforms.service.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
+
+export const list = asyncHandler(async (req, res) => {
+  const credentials = await service.listCredentials(req.user.id);
+  res.status(200).json({ data: credentials });
+});
 
 export const addWhatsApp = asyncHandler(async (req, res) => {
   const credential = await service.connectWhatsApp(req.user.id, req.body);
@@ -25,4 +30,9 @@ export const addGoogle = asyncHandler(async (req, res) => {
 export const addTwilio = asyncHandler(async (req, res) => {
   const credential = await service.connectTwilio(req.user.id, req.body);
   res.status(200).json({ message: 'Twilio (SMS) account connected', credential });
+});
+
+export const remove = asyncHandler(async (req, res) => {
+  const result = await service.disconnect(req.user.id, req.params.code);
+  res.status(200).json({ message: `${req.params.code} disconnected`, ...result });
 });

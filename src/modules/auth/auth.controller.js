@@ -5,19 +5,34 @@
 import * as authService from './auth.service.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
-export const register = asyncHandler(async (req, res) => {
-  const { user, tokens } = await authService.register(req.body);
+/**
+ * Request context stored alongside a refresh token so a user can tell
+ * their sessions apart (and so we can spot an unfamiliar one).
+ */
+function sessionContext(req) {
+  return { userAgent: req.get('user-agent') ?? undefined, ipAddress: req.ip };
+}
+
+export const signup = asyncHandler(async (req, res) => {
+  const { user, tokens } = await authService.register(req.body, sessionContext(req));
   res.status(201).json({ user, ...tokens });
 });
 
 export const login = asyncHandler(async (req, res) => {
-  const { user, tokens } = await authService.login(req.body);
+  const { user, tokens } = await authService.login(req.body, sessionContext(req));
   res.status(200).json({ user, ...tokens });
 });
 
 export const refresh = asyncHandler(async (req, res) => {
-  const { tokens } = await authService.refresh(req.body);
+  const { tokens } = await authService.refresh(req.body, sessionContext(req));
   res.status(200).json(tokens);
+});
+
+export const logout = asyncHandler(async (req, res) => {
+  // req.user is optional here: an expired access token shouldn't stop
+  // someone from logging out.
+  const { revoked } = await authService.logout(req.body, req.user?.id ?? null);
+  res.status(200).json({ message: 'Logged out', sessionsRevoked: revoked });
 });
 
 export const me = asyncHandler(async (req, res) => {

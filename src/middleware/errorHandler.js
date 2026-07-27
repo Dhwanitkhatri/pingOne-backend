@@ -10,8 +10,9 @@
 
 import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
+import multer from 'multer';
 import { AppError } from '../utils/AppError.js';
-import { isProd } from '../config/env.js';
+import { env, isProd } from '../config/env.js';
 
 // eslint-disable-next-line no-unused-vars -- Express needs the 4-arg signature
 export function errorHandler(err, req, res, next) {
@@ -48,7 +49,27 @@ export function errorHandler(err, req, res, next) {
     }
   }
 
-  // 4) Anything else — unexpected. Log and return a generic 500.
+  // 4) File-upload errors (multer) — always the client's doing.
+  if (err instanceof multer.MulterError) {
+    const message =
+      err.code === 'LIMIT_FILE_SIZE'
+        ? `That file is too large — the limit is ${env.CSV_MAX_UPLOAD_MB} MB`
+        : err.code === 'LIMIT_UNEXPECTED_FILE'
+          ? `Unexpected file field "${err.field}"`
+          : `Upload failed: ${err.message}`;
+
+    return res.status(400).json({ error: { message, code: err.code } });
+  }
+
+  // 5) Malformed JSON body — express.json() throws a SyntaxError with a
+  // status, which would otherwise be reported as an internal error.
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      error: { message: 'Request body is not valid JSON', code: 'INVALID_JSON' },
+    });
+  }
+
+  // 6) Anything else — unexpected. Log and return a generic 500.
   console.error('Unhandled error:', err);
   return res.status(500).json({
     error: {
