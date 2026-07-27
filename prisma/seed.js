@@ -18,8 +18,10 @@ const platforms = [
 
 const messageStatuses = [
   { code: 'pending', description: 'Queued, not yet sent' },
+  { code: 'sending', description: 'Send in progress' },          // ADD
   { code: 'sent', description: 'Sent to platform API' },
   { code: 'delivered', description: 'Confirmed delivered to recipient' },
+  { code: 'read', description: 'Confirmed read by recipient' },  // ADD
   { code: 'failed', description: 'Send attempt failed' },
   { code: 'cancelled', description: 'Cancelled by user before sending' },
 ];
