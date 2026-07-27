@@ -16,6 +16,7 @@ import userRoutes from '../modules/users/users.routes.js';
 
 import messageRoutes from '../modules/messages/messages.routes.js';
 import schedulerRoutes from '../modules/scheduler/scheduler.routes.js';
+import templateRoutes from '../modules/templates/templates.routes.js';
 
 const router = Router();
 
@@ -38,5 +39,6 @@ router.use('/groups', groupRoutes);
 router.use('/users', userRoutes);
 router.use('/messages', messageRoutes);
 router.use('/scheduler', schedulerRoutes);
+router.use('/templates', templateRoutes);
 
 export default router;
