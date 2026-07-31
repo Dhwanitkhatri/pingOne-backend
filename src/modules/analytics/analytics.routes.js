@@ -1,49 +1,61 @@
 // ============================================================
-//   GET /analytics/dashboard
-// Returns aggregate counts only — no chart rendering, that's a
-// frontend concern.
+// Analytics Routes
+//
+// GET /analytics/summary          headline counts + status breakdown
+// GET /analytics/platform-stats   per-channel performance and top errors
+// GET /analytics/delivery-rates   time series, bucketed by day|week|month
+// GET /analytics/best-send-times  hour/weekday performance + recommendations
+// GET /analytics/dashboard        original flat summary (kept for the frontend)
+//
+// Every endpoint accepts ?from=&to= (ISO dates, default: trailing 30 days) and
+// ?platform=telegram|whatsapp|gmail|sms. All are read-only and scoped to the
+// authenticated user — a user can never see another account's numbers.
+//
+// Aggregate counts only; no chart rendering, that's a frontend concern.
 // ============================================================
 
 import { Router } from 'express';
-import { prisma } from '../../config/prisma.js';
+
+import * as analyticsController from './analytics.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { asyncHandler } from '../../utils/asyncHandler.js';
-import { MESSAGE_STATUS } from '../../constants/codes.js';
+import { validate } from '../../middleware/validate.js';
+import {
+  dateRangeSchema,
+  deliveryRatesSchema,
+  bestSendTimesSchema,
+} from './analytics.schema.js';
 
 const router = Router();
 router.use(authenticate);
 
 router.get(
+  '/summary',
+  validate({ query: dateRangeSchema }),
+  analyticsController.getSummary
+);
+
+router.get(
+  '/platform-stats',
+  validate({ query: dateRangeSchema }),
+  analyticsController.getPlatformStats
+);
+
+router.get(
+  '/delivery-rates',
+  validate({ query: deliveryRatesSchema }),
+  analyticsController.getDeliveryRates
+);
+
+router.get(
+  '/best-send-times',
+  validate({ query: bestSendTimesSchema }),
+  analyticsController.getBestSendTimes
+);
+
+router.get(
   '/dashboard',
-  asyncHandler(async (req, res) => {
-    const userId = req.user.id;
-
-    // Scope to this user's jobs only.
-    const deliveries = await prisma.messageDelivery.findMany({
-      where: { job: { userId } },
-      select: { status: { select: { code: true } }, platform: { select: { code: true } } },
-    });
-
-    const total = deliveries.length;
-    const countByStatus = {};
-    const countByPlatform = {};
-
-    for (const d of deliveries) {
-      countByStatus[d.status.code] = (countByStatus[d.status.code] ?? 0) + 1;
-      countByPlatform[d.platform.code] = (countByPlatform[d.platform.code] ?? 0) + 1;
-    }
-
-    const delivered = (countByStatus[MESSAGE_STATUS.DELIVERED] ?? 0) + (countByStatus[MESSAGE_STATUS.SENT] ?? 0);
-    const successRate = total > 0 ? Number(((delivered / total) * 100).toFixed(1)) : 0;
-
-    res.status(200).json({
-      totalMessages: total,
-      pending: countByStatus[MESSAGE_STATUS.PENDING] ?? 0,
-      failed: countByStatus[MESSAGE_STATUS.FAILED] ?? 0,
-      successRate,
-      ...countByPlatform, // { telegram: 620, gmail: 410, sms: 150, whatsapp: 70 }
-    });
-  })
+  validate({ query: dateRangeSchema }),
+  analyticsController.getDashboard
 );
 
 export default router;

@@ -5,6 +5,7 @@
 
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../utils/AppError.js";
+import { deleteAttachment } from "../../utils/fileStorage.js";
 
 // Fields safe to return to the client.
 const publicMessageSelect = {
@@ -14,6 +15,17 @@ const publicMessageSelect = {
   content: true,
   createdAt: true,
   updatedAt: true,
+  attachments: {
+    select: {
+      id: true,
+      fileName: true,
+      fileUrl: true,
+      fileSizeBytes: true,
+      createdAt: true,
+      fileType: { select: { code: true } },
+    },
+    orderBy: { id: "asc" },
+  },
 };
 
 /**
@@ -150,6 +162,7 @@ export async function deleteMessage(messageId, userId) {
     },
     include: {
       scheduledJobs: { select: { id: true }, take: 1 },
+      attachments: { select: { fileUrl: true } },
     },
   });
 
@@ -166,11 +179,18 @@ export async function deleteMessage(messageId, userId) {
     );
   }
 
+  // Attachment rows cascade with the message; their files on disk don't, so
+  // clean those up explicitly or they leak. Done after the delete commits —
+  // unlinking first would lose the files if the delete then failed.
   await prisma.message.delete({
     where: {
       id: Number(messageId),
     },
   });
+
+  await Promise.all(
+    existingMessage.attachments.map((a) => deleteAttachment(a.fileUrl))
+  );
 
   return {
     message: "Message deleted successfully",

@@ -11,7 +11,7 @@
 // ============================================================
 
 import { Worker } from 'bullmq';
-import { connection, QUEUE_NAMES } from '../queue/bull.queue.js';
+import { connection, QUEUE_NAMES, attachErrorLogging } from '../queue/bull.queue.js';
 import { enqueueDelivery } from '../queue/queue.service.js';
 
 export function startRetryWorker() {
@@ -27,5 +27,5 @@ export function startRetryWorker() {
 
   worker.on('failed', (job, err) => console.error(`[retry] job ${job?.id} failed:`, err.message));
 
-  return worker;
+  return attachErrorLogging(worker, 'worker:retry');
 }

@@ -51,12 +51,20 @@ export function errorHandler(err, req, res, next) {
 
   // 4) File-upload errors (multer) — always the client's doing.
   if (err instanceof multer.MulterError) {
+    // The two upload routes have different caps, so report the one that applies
+    // to the request that actually failed rather than a single hardcoded limit.
+    const limitMb = req.path.includes('/attachments')
+      ? env.ATTACHMENT_MAX_UPLOAD_MB
+      : env.CSV_MAX_UPLOAD_MB;
+
     const message =
       err.code === 'LIMIT_FILE_SIZE'
-        ? `That file is too large — the limit is ${env.CSV_MAX_UPLOAD_MB} MB`
-        : err.code === 'LIMIT_UNEXPECTED_FILE'
-          ? `Unexpected file field "${err.field}"`
-          : `Upload failed: ${err.message}`;
+        ? `That file is too large — the limit is ${limitMb} MB`
+        : err.code === 'LIMIT_FILE_COUNT'
+          ? `Too many files — at most ${env.ATTACHMENT_MAX_FILES} per request`
+          : err.code === 'LIMIT_UNEXPECTED_FILE'
+            ? `Unexpected file field "${err.field}"`
+            : `Upload failed: ${err.message}`;
 
     return res.status(400).json({ error: { message, code: err.code } });
   }

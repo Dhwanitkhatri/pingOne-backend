@@ -323,6 +323,10 @@ model ScheduledJob {
   statusId         Int               @default(1) @map("status_id") @db.SmallInt
   scheduledAt      DateTime          @map("scheduled_at") @db.Timestamp(6)
   nextRunAt        DateTime?         @map("next_run_at") @db.Timestamp(6)
+  /// How many times this job has fired. Counts missed runs that the scheduler
+  /// skipped during catch-up too, so RecurrenceRule.maxOccurrences stays
+  /// accurate across worker downtime.
+  occurrenceCount  Int               @default(0) @map("occurrence_count")
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
   recipients       JobRecipient[]
@@ -380,6 +384,8 @@ model MessageDelivery {
   @@index([contactId], map: "idx_md_contact_id")
   @@index([statusId], map: "idx_md_status_id")
   @@index([platformId], map: "idx_md_platform_id")
+  @@index([platformMessageId], map: "idx_md_platform_message_id")
+  @@index([sentAt], map: "idx_md_sent_at")
   @@map("message_deliveries")
 }
 

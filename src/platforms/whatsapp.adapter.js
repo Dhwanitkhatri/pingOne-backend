@@ -11,12 +11,25 @@
 //   (b) only demo WhatsApp sends within a 24h window (reply to a message
 //       the test number sent your business number first).
 // This adapter implements the free-text path (option b / dev/test mode).
+//
+// Attachments go through Meta's two-step media flow: upload the bytes to
+// /{phone-number-id}/media, then send a message referencing the returned media
+// id. That's deliberately preferred over passing a `link` — a link has to be
+// publicly reachable, which it isn't during local development.
 // ============================================================
 
 import { BaseAdapter } from './base.adapter.js';
 import { AppError } from '../utils/AppError.js';
 
 const API_VERSION = 'v19.0';
+const GRAPH_BASE = `https://graph.facebook.com/${API_VERSION}`;
+
+/** file_types code -> WhatsApp message type. Unknown types ride as documents. */
+const MEDIA_TYPES = { image: 'image', video: 'video', audio: 'audio' };
+const DEFAULT_MEDIA_TYPE = 'document';
+
+// Meta's caption limit for media messages.
+const CAPTION_LIMIT = 1024;
 
 export class WhatsAppAdapter extends BaseAdapter {
   static code = 'whatsapp';
@@ -28,7 +41,7 @@ export class WhatsAppAdapter extends BaseAdapter {
         code: 'INVALID_WHATSAPP_CREDENTIAL',
       });
     }
-    const res = await fetch(`https://graph.facebook.com/${API_VERSION}/${phoneNumberId}`, {
+    const res = await fetch(`${GRAPH_BASE}/${phoneNumberId}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const data = await res.json();
@@ -42,30 +55,96 @@ export class WhatsAppAdapter extends BaseAdapter {
   }
 
   formatMessage(content, attachments = []) {
-    // WhatsApp free-text messages are plain (no HTML). Attachments are
-    // sent via a separate `type: image|document` payload by the worker.
+    // WhatsApp free-text messages are plain (no HTML).
     return { formatted: content, hasAttachments: attachments.length > 0, attachments };
   }
 
   async send({ secret: accessToken, extraInfo }, recipient, message) {
     const phoneNumberId = extraInfo?.phone_number_id;
+    const attachments = message.attachments ?? [];
+    const ctx = { accessToken, phoneNumberId, to: recipient.handle };
 
-    const res = await fetch(
-      `https://graph.facebook.com/${API_VERSION}/${phoneNumberId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: recipient.handle, // E.164 phone number, no '+' per Meta's spec
-          type: 'text',
-          text: { body: message.formatted },
-        }),
-      }
+    // Single short attachment: one captioned media message rather than two
+    // separate notifications.
+    if (attachments.length === 1 && message.formatted.length <= CAPTION_LIMIT) {
+      const data = await this.#sendMedia(ctx, attachments[0], message.formatted);
+      return { platformMessageId: data.messages?.[0]?.id, raw: data };
+    }
+
+    const textData = await this.#sendText(ctx, message.formatted);
+
+    // Sequential — Meta rate-limits per recipient and this preserves order.
+    for (const attachment of attachments) {
+      await this.#sendMedia(ctx, attachment);
+    }
+
+    // The text message id is the one webhook status callbacks will reference.
+    return { platformMessageId: textData.messages?.[0]?.id, raw: textData };
+  }
+
+  async #sendText(ctx, body) {
+    return this.#post(ctx, {
+      messaging_product: 'whatsapp',
+      to: ctx.to, // E.164 phone number, no '+' per Meta's spec
+      type: 'text',
+      text: { body },
+    });
+  }
+
+  async #sendMedia(ctx, attachment, caption) {
+    const mediaId = await this.#uploadMedia(ctx, attachment);
+    const type = MEDIA_TYPES[attachment.typeCode] ?? DEFAULT_MEDIA_TYPE;
+
+    const media = { id: mediaId };
+    // Only document and image accept a filename/caption pair; audio accepts
+    // neither, and sending an unsupported field makes Meta reject the whole call.
+    if (type === 'document') media.filename = attachment.fileName;
+    if (caption && type !== 'audio') media.caption = caption;
+
+    return this.#post(ctx, {
+      messaging_product: 'whatsapp',
+      to: ctx.to,
+      type,
+      [type]: media,
+    });
+  }
+
+  /** Step one of the media flow: POST the bytes, get an id back. */
+  async #uploadMedia({ accessToken, phoneNumberId }, attachment) {
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', attachment.mimeType);
+    form.append(
+      'file',
+      new Blob([attachment.buffer], { type: attachment.mimeType }),
+      attachment.fileName
     );
+
+    const res = await fetch(`${GRAPH_BASE}/${phoneNumberId}/media`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` }, // no Content-Type — fetch sets the boundary
+      body: form,
+    });
+    const data = await res.json();
+
+    if (data.error || !data.id) {
+      throw AppError.badRequest(
+        `WhatsApp media upload failed for "${attachment.fileName}": ${data.error?.message ?? 'no media id returned'}`,
+        { code: 'WHATSAPP_MEDIA_UPLOAD_FAILED', details: data.error }
+      );
+    }
+    return data.id;
+  }
+
+  async #post({ accessToken, phoneNumberId }, payload) {
+    const res = await fetch(`${GRAPH_BASE}/${phoneNumberId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
     const data = await res.json();
 
     if (data.error) {
@@ -74,7 +153,6 @@ export class WhatsAppAdapter extends BaseAdapter {
         details: data.error,
       });
     }
-
-    return { platformMessageId: data.messages?.[0]?.id, raw: data };
+    return data;
   }
 }

@@ -72,6 +72,30 @@ const envSchema = z.object({
 
   // Max size of an uploaded contacts CSV, in megabytes.
   CSV_MAX_UPLOAD_MB: z.coerce.number().positive().max(50).default(5),
+
+  // Redis, backing the BullMQ delivery/retry queues. Only the worker process
+  // and the scheduler need it — the API boots fine without Redis running.
+  REDIS_URL: z.string().url().default('redis://localhost:6379'),
+
+  // ---- Message attachments ----------------------------------------
+  // Where attachment files are written, relative to the project root.
+  UPLOAD_DIR: z.string().trim().default('uploads'),
+  ATTACHMENT_MAX_UPLOAD_MB: z.coerce.number().positive().max(100).default(10),
+  ATTACHMENT_MAX_FILES: z.coerce.number().int().positive().max(20).default(5),
+
+  // Public origin of THIS API. Attachment fileUrls are built from it, and
+  // Twilio MMS fetches media over the public internet — so for real MMS this
+  // has to be a tunnel/deployed host, not localhost. Telegram, WhatsApp and
+  // Gmail upload the bytes directly and don't care.
+  PUBLIC_BASE_URL: z.string().url().default('http://localhost:4000'),
+
+  // ---- Webhooks ---------------------------------------------------
+  // Value Meta echoes back during the GET verification handshake. Set the same
+  // string in the Meta dashboard's "Verify token" field.
+  META_WEBHOOK_VERIFY_TOKEN: z.string().trim().min(1).optional(),
+  // Shared secret passed to Telegram's setWebhook as `secret_token`; Telegram
+  // returns it in the X-Telegram-Bot-Api-Secret-Token header on every update.
+  TELEGRAM_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

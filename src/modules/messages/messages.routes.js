@@ -7,15 +7,21 @@
 // PATCH   /messages/:id
 // DELETE  /messages/:id
 //
+// POST    /messages/:id/attachments                 multipart, field "files"
+// GET     /messages/:id/attachments
+// DELETE  /messages/:id/attachments/:attachmentId
+//
 // All routes require authentication.
 // ============================================================
 
 import { Router } from "express";
 
 import * as messageController from "./messages.controlller.js";
+import * as attachmentController from "./attachments.controller.js";
 
 import { authenticate } from "../../middleware/authenticate.js";
 import { validate } from "../../middleware/validate.js";
+import { uploadAttachments } from "../../middleware/upload.js";
 
 import {
   createMessageSchema,
@@ -57,6 +63,24 @@ router.patch(
 router.delete(
   "/:id",
   messageController.deleteMessage
+);
+
+// ---- attachments ----------------------------------------------------
+
+router.post(
+  "/:id/attachments",
+  uploadAttachments("files"),
+  attachmentController.addAttachments
+);
+
+router.get(
+  "/:id/attachments",
+  attachmentController.listAttachments
+);
+
+router.delete(
+  "/:id/attachments/:attachmentId",
+  attachmentController.removeAttachment
 );
 
 export default router;

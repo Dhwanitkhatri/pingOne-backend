@@ -70,7 +70,9 @@ export async function updateSchedule(userId, jobId, patch) {
       where: { id: jobId },
       data: {
         ...(patch.scheduledAt && { scheduledAt: patch.scheduledAt, nextRunAt: patch.scheduledAt }),
-        ...(patch.recurrence && { recurrenceRuleId }),
+        // A new recurrence rule starts a new series, so the occurrence counter
+        // resets — otherwise past sends would eat into the new maxOccurrences.
+        ...(patch.recurrence && { recurrenceRuleId, occurrenceCount: 0 }),
       },
       include,
     });

@@ -16,7 +16,7 @@
 
 import { prisma } from '../config/prisma.js';
 import { enqueueDelivery } from '../queue/queue.service.js';
-import { computeNextRun } from '../modules/scheduler/recurrence.js';
+import { computeNextRunAfter } from '../modules/scheduler/recurrence.js';
 import { lookupByCode } from '../utils/lookupCache.js';
 import { MESSAGE_STATUS } from '../constants/codes.js';
 
@@ -68,17 +68,32 @@ async function fireJob(job, pendingStatusId, sentStatusId) {
     await enqueueDelivery(delivery.id);
   }
 
-  const nextRunAt = computeNextRun(job.nextRunAt ?? job.scheduledAt, job.recurrenceRule);
+  // This firing counts toward RecurrenceRule.maxOccurrences.
+  const occurrenceCount = job.occurrenceCount + 1;
+
+  // computeNextRunAfter walks past any runs missed while the worker was down
+  // instead of firing them all in a burst. Skipped runs still count against
+  // maxOccurrences, so a "10 sends" rule never exceeds 10.
+  const { nextRunAt, skipped } = computeNextRunAfter(
+    job.nextRunAt ?? job.scheduledAt,
+    job.recurrenceRule,
+    occurrenceCount
+  );
 
   await prisma.scheduledJob.update({
     where: { id: job.id },
-    data: nextRunAt
-      ? { nextRunAt } // still recurring — leave status pending for the next tick
-      : { nextRunAt: null, statusId: sentStatusId }, // one-time (or recurrence ended) — mark dispatched
+    data: {
+      occurrenceCount: occurrenceCount + skipped,
+      ...(nextRunAt
+        ? { nextRunAt } // still recurring — leave status pending for the next tick
+        : { nextRunAt: null, statusId: sentStatusId }), // one-time (or series ended) — mark dispatched
+    },
   });
 
   console.log(
-    `[scheduler] fired job ${job.id} -> ${deliveries.length} delivery(ies), next run: ${nextRunAt ?? 'none'}`
+    `[scheduler] fired job ${job.id} -> ${deliveries.length} delivery(ies), ` +
+      `occurrence ${occurrenceCount}, next run: ${nextRunAt?.toISOString() ?? 'none'}` +
+      (skipped > 0 ? ` (skipped ${skipped} missed run(s))` : '')
   );
 }
 

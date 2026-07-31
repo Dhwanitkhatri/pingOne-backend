@@ -344,12 +344,144 @@ accounts that predate the table still get sensible values.
 
 ---
 
+## Messages API (`/api/v1/messages`)
+
+| Method | Path                                       | Body / notes                                          |
+| ------ | ------------------------------------------ | ----------------------------------------------------- |
+| POST   | `/messages`                                | `content`, optional `templateId`                      |
+| GET    | `/messages`                                | – (includes each message's attachments)               |
+| GET    | `/messages/:id`                            | –                                                     |
+| PATCH  | `/messages/:id`                            | any of `content`, `templateId`                        |
+| DELETE | `/messages/:id`                            | refused while a scheduled job still references it     |
+| POST   | `/messages/:id/attachments`                | `multipart/form-data`, field **`files`** (1–5 files)  |
+| GET    | `/messages/:id/attachments`                | –                                                     |
+| DELETE | `/messages/:id/attachments/:attachmentId`  | refused once the message has been sent                |
+
+### Attachments
+
+Files are stored under `UPLOAD_DIR/attachments/` with a generated UUID filename and
+served from `/uploads/attachments/…`. The client's original filename is kept in the
+database for display but never touches the filesystem, and only an allowlist of MIME
+types is accepted. Per-file size and per-request count come from
+`ATTACHMENT_MAX_UPLOAD_MB` / `ATTACHMENT_MAX_FILES`.
+
+> **`/uploads` is not behind authentication.** It can't be: Twilio fetches MMS media
+> as an anonymous HTTP client, and no JWT can be handed to it. Security therefore rests
+> on the URL being unguessable (a v4 UUID), which is the standard capability-URL trade —
+> anyone holding the link can read the file. Files are served with
+> `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` so a file that
+> slipped through as HTML/SVG can't execute in this origin, and `.svg` is excluded from
+> the stored-extension allowlist for the same reason. If attachments need to be genuinely
+> private, move storage to S3/R2 and switch `fileUrl` to short-lived presigned URLs —
+> `src/utils/fileStorage.js` is the only file that would change.
+
+Each channel carries files the way its API requires, so attachments work in local
+development without a public URL — with one exception:
+
+| Platform  | How attachments are sent                                   | Needs a public `PUBLIC_BASE_URL`? |
+| --------- | ---------------------------------------------------------- | --------------------------------- |
+| Gmail     | inlined as `multipart/mixed` MIME parts                    | no                                |
+| Telegram  | multipart upload to `sendPhoto`/`sendVideo`/`sendDocument` | no                                |
+| WhatsApp  | uploaded to `/{phone-number-id}/media`, sent by media id   | no                                |
+| SMS       | Twilio MMS `MediaUrl` — Twilio fetches it over the internet | **yes**                          |
+
+---
+
+## Analytics API (`/api/v1/analytics`)
+
+| Method | Path                          | Returns                                                     |
+| ------ | ----------------------------- | ----------------------------------------------------------- |
+| GET    | `/analytics/summary`          | headline counts, rates, status breakdown, retry stats       |
+| GET    | `/analytics/platform-stats`   | the same metrics per channel, plus each channel's top errors |
+| GET    | `/analytics/delivery-rates`   | time series for charting, gaps filled with zeroes           |
+| GET    | `/analytics/best-send-times`  | per-hour / per-weekday performance and ranked recommendations |
+| GET    | `/analytics/dashboard`        | the original flat summary shape                             |
+
+Shared query params: `?from=` and `?to=` (ISO dates, default a trailing 30 days) and
+`?platform=telegram|whatsapp|gmail|sms`. `delivery-rates` also takes
+`?bucket=day|week|month`; `best-send-times` takes `?timezone=` (IANA, default `UTC`)
+and `?minSample=` (default 5). Every response is scoped to the authenticated user.
+
+`best-send-times` ranks hours by a delivery rate smoothed toward the overall average
+rather than the raw rate — otherwise an hour with a single lucky send outranks an hour
+with hundreds, and the "best time" ends up being whichever hour has the least data.
+
+---
+
+## Webhooks (`/api/v1/webhooks`) — public endpoints
+
+| Method | Path                  | Purpose                                          |
+| ------ | --------------------- | ------------------------------------------------ |
+| GET    | `/webhooks/whatsapp`  | Meta subscription handshake (echoes `hub.challenge`) |
+| POST   | `/webhooks/whatsapp`  | Meta Cloud API delivery-status callbacks         |
+| POST   | `/webhooks/telegram`  | Telegram Bot API updates                         |
+
+These are the only unauthenticated write endpoints in the API — the callers are Meta's
+and Telegram's servers, which have no PingOne session. Each request is instead verified
+cryptographically: WhatsApp by HMAC-SHA256 over the raw body (`X-Hub-Signature-256`,
+keyed with `META_APP_SECRET`), Telegram by the shared `secret_token` it echoes in
+`X-Telegram-Bot-Api-Secret-Token`. Unverified requests are rejected with 401/403.
+
+Status transitions are **monotonic and idempotent**: platform callbacks arrive out of
+order (Meta routinely sends `read` before `delivered`) and are retried for days until
+they get a 2xx, so a replayed or late event can never move a delivery backwards or
+write a duplicate log row.
+
+**Registering them**
+
+```bash
+# WhatsApp — Meta App Dashboard → WhatsApp → Configuration
+#   Callback URL:  https://<host>/api/v1/webhooks/whatsapp
+#   Verify token:  $META_WEBHOOK_VERIFY_TOKEN
+#   Subscribe to the `messages` field.
+
+# Telegram
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+     -d "url=https://<host>/api/v1/webhooks/telegram" \
+     -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
+Locally, point both at a tunnel (`ngrok http 4000`) — the platforms have to reach the
+endpoint from the public internet.
+
+**A caveat worth stating plainly:** the Telegram Bot API has no delivery receipts. There
+is no event for "your message reached the user". The handler therefore treats an incoming
+message from a chat as a read receipt for the most recent unconfirmed delivery to it —
+a sound inference, and the only read signal the platform offers. WhatsApp, by contrast,
+reports `sent`/`delivered`/`read`/`failed` properly.
+
+---
+
+## Recurrence
+
+`next_run_at` is computed by [`src/modules/scheduler/recurrence.js`](src/modules/scheduler/recurrence.js),
+a pure function with no clock or DB access.
+
+- **daily** — every N days.
+- **weekly** — honours `daysOfWeek` (`"MON,WED,FRI"`), where `intervalValue` means
+  "every N weeks". Without it, falls back to the same weekday N weeks later.
+- **monthly** — every N months, clamped to the last valid day: Jan 31 + 1 month is
+  Feb 28 (or Feb 29 in a leap year), never Mar 3.
+- **yearly** — every N years, honouring `monthOfYear`/`dayOfMonth`; Feb 29 clamps to
+  Feb 28 in non-leap years.
+- **`endDate`** is a DATE column, so a run *on* the end date is still allowed regardless
+  of its time of day.
+- **`maxOccurrences`** is enforced against `scheduled_jobs.occurrence_count`.
+
+If the worker was down, the scheduler fast-forwards to the next future run instead of
+firing every missed one in a burst. Skipped runs still count against `maxOccurrences`,
+so a "10 sends" rule sends at most 10 times.
+
+---
+
 ## npm scripts
 
 | Script              | Description                                        |
 | ------------------- | -------------------------------------------------- |
-| `npm run dev`       | Start with nodemon (auto-reload)                   |
-| `npm start`         | Start the server                                   |
+| `npm run dev`       | Start the API with nodemon (auto-reload)           |
+| `npm start`         | Start the API server                               |
+| `npm run worker`    | Start the background workers (scheduler/delivery/retry) |
+| `npm run dev:worker`| Start the workers with nodemon                     |
 | `npm run setup`     | generate → migrate → constraints → seed            |
 | `npm run db:migrate`| Create/apply a new migration                       |
 | `npm run db:constraints` | Apply CHECK constraints + partial indexes     |
@@ -366,12 +498,15 @@ accounts that predate the table still get sensible values.
 - [x] Contacts + groups + platform handles CRUD
 - [x] Contact import — Google People API + CSV
 - [x] Notification preferences
-- [ ] Templates + variables
-- [x] Message composer (CRUD) · [ ] attachments
+- [x] Templates + variables (placeholder rendering + multi-platform preview)
+- [x] Message composer (CRUD) · [x] attachments
 - [x] Platform credential storage (AES-256 encrypted) — WhatsApp / Telegram / Google / Twilio
 - [x] Platform OAuth — Google (Gmail) and Meta (WhatsApp)
-- [ ] Scheduling engine (BullMQ + Redis) with recurrence
-- [ ] Channel adapters: Gmail API, Telegram Bot API, WhatsApp (best-effort)
-- [ ] Delivery tracking + webhook status updates
-- [ ] Smart-send rules ("skip if replied") + send-time suggestion
+- [x] Scheduling engine (BullMQ + Redis) with recurrence
+- [x] Channel adapters: Gmail API, Telegram Bot API, WhatsApp, Twilio SMS
+- [x] Retry engine — 3 attempts, exponential backoff (30s / 2m / 10m)
+- [x] Delivery tracking + webhook status updates
+- [x] Analytics — summary, per-platform, delivery rates, best send times
+- [ ] Notification service (push/email on permanent failure)
+- [ ] Smart-send rules ("skip if replied")
 ```

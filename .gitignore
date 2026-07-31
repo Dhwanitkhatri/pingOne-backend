@@ -26,3 +26,8 @@ Thumbs.db
 dist/
 build/
 coverage/
+
+# Uploaded message attachments — user content, not source. Keep the directory
+# so a fresh clone can serve /uploads before the first upload creates it.
+uploads/*
+!uploads/.gitkeep
