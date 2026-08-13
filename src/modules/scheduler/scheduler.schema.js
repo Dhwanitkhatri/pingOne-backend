@@ -54,6 +54,7 @@ export const createScheduleSchema = z
     message: inlineMessageSchema.optional(),
     scheduledAt: z.coerce.date(),
     recurrence: recurrenceSchema.optional(), // omit for a one-time send
+    skipIfReplied: z.boolean().default(false),
     recipients: z.array(recipientSchema).min(1, 'At least one recipient is required'),
   })
   .refine((data) => Boolean(data.messageId) !== Boolean(data.message), {
@@ -63,5 +64,6 @@ export const createScheduleSchema = z
 export const updateScheduleSchema = z.object({
   scheduledAt: z.coerce.date().optional(),
   recurrence: recurrenceSchema.optional(),
+  skipIfReplied: z.boolean().optional(),
   recipients: z.array(recipientSchema).min(1).optional(),
 });

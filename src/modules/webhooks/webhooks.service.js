@@ -49,20 +49,52 @@ export async function handleWhatsAppEvent(body) {
   for (const entry of body?.entry ?? []) {
     for (const change of entry?.changes ?? []) {
       const statuses = change?.value?.statuses ?? [];
-
-      if (statuses.length === 0) {
-        summary.ignored += 1; // an inbound message, or a field we don't subscribe to
-        continue;
-      }
+      const messages = change?.value?.messages ?? [];
 
       for (const status of statuses) {
         const result = await applyWhatsAppStatus(status);
         summary[result] += 1;
       }
+
+      for (const message of messages) {
+        const recorded = await recordWhatsAppReply(message);
+        summary[recorded ? 'processed' : 'unmatched'] += 1;
+      }
+
+      if (statuses.length === 0 && messages.length === 0) summary.ignored += 1;
     }
   }
 
   return summary;
+}
+
+/** Store reply signals without retaining the inbound message content. */
+async function recordWhatsAppReply(message) {
+  if (!message?.from) return false;
+  const whatsapp = await lookupByCode('platform', PLATFORM.WHATSAPP);
+  // Meta supplies `from` as digits without the E.164 `+`; contacts store E.164.
+  const rawHandle = String(message.from);
+  const phoneCandidates = rawHandle.startsWith('+') ? [rawHandle] : [rawHandle, `+${rawHandle}`];
+  const contacts = await prisma.contact.findMany({
+    where: {
+      deletedAt: null,
+      OR: [
+        { platformHandles: { some: { platformId: whatsapp.id, handle: rawHandle } } },
+        { phones: { some: { phone: { in: phoneCandidates } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (!contacts.length) return false;
+
+  await prisma.contactReply.createMany({
+    data: contacts.map((contact) => ({
+      contactId: contact.id,
+      platformId: whatsapp.id,
+      repliedAt: parseUnixSeconds(message.timestamp),
+    })),
+  });
+  return true;
 }
 
 async function applyWhatsAppStatus(status) {
@@ -117,7 +149,7 @@ export async function handleTelegramEvent(update) {
   const message = update?.message ?? update?.edited_message;
 
   if (message?.chat?.id) {
-    return handleTelegramEngagement(String(message.chat.id));
+    return handleTelegramEngagement(String(message.chat.id), message.date);
   }
 
   const membership = update?.my_chat_member;
@@ -135,7 +167,7 @@ export async function handleTelegramEvent(update) {
   return { processed: 0, ignored: 1, unmatched: 0 };
 }
 
-async function handleTelegramEngagement(chatId) {
+async function handleTelegramEngagement(chatId, timestamp) {
   const telegram = await lookupByCode('platform', PLATFORM.TELEGRAM);
 
   // chat_id -> contact. Telegram handles are stored on ContactPlatformHandle
@@ -151,6 +183,14 @@ async function handleTelegramEngagement(chatId) {
     console.warn(`[webhook:telegram] no contact has telegram handle ${chatId}`);
     return { processed: 0, ignored: 0, unmatched: 1 };
   }
+
+  await prisma.contactReply.createMany({
+    data: handles.map(({ contactId }) => ({
+      contactId,
+      platformId: telegram.id,
+      repliedAt: parseUnixSeconds(timestamp),
+    })),
+  });
 
   // Most recent send only. An older message being read is unknowable, and
   // marking every past delivery as read on one reply would be plainly wrong.

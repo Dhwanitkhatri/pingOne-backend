@@ -54,7 +54,8 @@ async function runTick() {
 }
 
 async function fireJob(job, pendingStatusId, sentStatusId) {
-  const contactPlatformPairs = await expandRecipients(job.recipients);
+  const recipientPairs = await expandRecipients(job.recipients);
+  const contactPlatformPairs = await excludeRepliedRecipients(job, recipientPairs);
 
   const deliveries = await prisma.$transaction(
     contactPlatformPairs.map(({ contactId, platformId }) =>
@@ -93,8 +94,27 @@ async function fireJob(job, pendingStatusId, sentStatusId) {
   console.log(
     `[scheduler] fired job ${job.id} -> ${deliveries.length} delivery(ies), ` +
       `occurrence ${occurrenceCount}, next run: ${nextRunAt?.toISOString() ?? 'none'}` +
-      (skipped > 0 ? ` (skipped ${skipped} missed run(s))` : '')
+      (skipped > 0 ? ` (skipped ${skipped} missed run(s))` : '') +
+      (recipientPairs.length !== contactPlatformPairs.length
+        ? `; smart-send skipped ${recipientPairs.length - contactPlatformPairs.length} replied recipient(s)`
+        : '')
   );
+}
+
+/** A reply after schedule creation opts a contact out of later sends on that channel. */
+async function excludeRepliedRecipients(job, pairs) {
+  if (!job.skipIfReplied || pairs.length === 0) return pairs;
+
+  const replies = await prisma.contactReply.findMany({
+    where: {
+      repliedAt: { gt: job.createdAt },
+      OR: pairs.map(({ contactId, platformId }) => ({ contactId, platformId })),
+    },
+    select: { contactId: true, platformId: true },
+    distinct: ['contactId', 'platformId'],
+  });
+  const replied = new Set(replies.map((reply) => `${reply.contactId}:${reply.platformId}`));
+  return pairs.filter((pair) => !replied.has(`${pair.contactId}:${pair.platformId}`));
 }
 
 /** Individual JobRecipient rows -> flat list of unique (contactId, platformId) pairs. */

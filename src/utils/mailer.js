@@ -46,3 +46,15 @@ export function sendPasswordResetEmail(to, resetUrl, ttlMin) {
       `If you didn't request this, you can safely ignore this email — your password won't change.`,
   });
 }
+
+/** Send an operational alert for a delivery that exhausted every retry. */
+export function sendPermanentFailureEmail(to, { contactName, platform, attempts, reason }) {
+  return deliver({
+    to,
+    subject: `PingOne delivery failed permanently (${platform})`,
+    text:
+      `A message to ${contactName} on ${platform} could not be sent after ${attempts} attempt(s).\n\n` +
+      `Reason: ${reason}\n\n` +
+      'The recipient was not sent another copy. Review the contact address and platform connection before scheduling again.',
+  });
+}

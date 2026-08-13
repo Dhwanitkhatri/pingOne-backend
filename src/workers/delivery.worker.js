@@ -19,6 +19,7 @@ import { enqueueRetry } from '../queue/queue.service.js';
 import { transitionStatus } from '../modules/deliveries/delivery-status.service.js';
 import { loadAttachmentsForSend } from '../modules/messages/attachments.service.js';
 import { MESSAGE_STATUS, CHANGED_BY } from '../constants/codes.js';
+import { notifyPermanentFailure } from '../modules/notifications/notifications.service.js';
 import * as platformsService from '../modules/platforms/platforms.service.js'; // teammate's module — owns credential storage/decryption
 
 /** A webhook already confirmed these — re-sending would duplicate the message. */
@@ -130,7 +131,6 @@ async function handleFailure(delivery, err) {
     console.error(
       `[delivery] delivery ${delivery.id} permanently failed after ${nextAttempt} attempt(s): ${err.message}`
     );
-    // TODO (Notification Service, item 10): insert a Notification row here
-    // and trigger push/email per the user's NotificationPreference.notifyOnFailure.
+    await notifyPermanentFailure(delivery, { attempts: nextAttempt, reason: err.message });
   }
 }

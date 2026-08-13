@@ -26,7 +26,7 @@ export async function getSchedule(userId, jobId) {
   return job;
 }
 
-export async function createSchedule(userId, { messageId, message, scheduledAt, recurrence, recipients }) {
+export async function createSchedule(userId, { messageId, message, scheduledAt, recurrence, recipients, skipIfReplied }) {
   const pendingStatus = await lookupByCode('messageStatus', MESSAGE_STATUS.PENDING);
 
   return prisma.$transaction(async (tx) => {
@@ -41,6 +41,7 @@ export async function createSchedule(userId, { messageId, message, scheduledAt, 
         recurrenceRuleId,
         statusId: pendingStatus.id,
         scheduledAt,
+        skipIfReplied,
         nextRunAt: scheduledAt, // scheduler worker fires it once this passes
         recipients: { create: recipients },
       },
@@ -73,6 +74,7 @@ export async function updateSchedule(userId, jobId, patch) {
         // A new recurrence rule starts a new series, so the occurrence counter
         // resets — otherwise past sends would eat into the new maxOccurrences.
         ...(patch.recurrence && { recurrenceRuleId, occurrenceCount: 0 }),
+        ...(patch.skipIfReplied !== undefined && { skipIfReplied: patch.skipIfReplied }),
       },
       include,
     });

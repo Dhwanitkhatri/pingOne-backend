@@ -342,6 +342,11 @@ error — the response distinguishes `added` from `alreadyMembers`.
 partial — send only what changes. The row is created with schema defaults on first read, so
 accounts that predate the table still get sensible values.
 
+Permanent delivery failures create a durable in-app notification (available at
+`GET /api/v1/notifications`, mark read with `PATCH /api/v1/notifications/:id/read`)
+and email the account owner when `notifyOnFailure` is enabled. A browser or mobile
+client can poll this endpoint or use it as the source for its push gateway.
+
 ---
 
 ## Messages API (`/api/v1/messages`)
@@ -507,6 +512,6 @@ so a "10 sends" rule sends at most 10 times.
 - [x] Retry engine — 3 attempts, exponential backoff (30s / 2m / 10m)
 - [x] Delivery tracking + webhook status updates
 - [x] Analytics — summary, per-platform, delivery rates, best send times
-- [ ] Notification service (push/email on permanent failure)
-- [ ] Smart-send rules ("skip if replied")
+- [x] Notification service (durable in-app alert + email on permanent failure)
+- [x] Smart-send rules ("skip if replied")
 ```

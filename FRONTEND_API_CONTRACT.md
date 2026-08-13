@@ -604,6 +604,7 @@ Returned as the **full Prisma model** with nested includes — no field filterin
   "recurrenceRuleId": 4,               // number | null (null = one-time send)
   "statusId": 1,
   "scheduledAt": "2026-08-10T09:00:00.000Z",
+  "skipIfReplied": false,
   "nextRunAt": "2026-08-10T09:00:00.000Z",   // null once the series is exhausted
   "occurrenceCount": 0,                // how many times it has fired
   "createdAt": "2026-08-06T10:00:00.000Z",

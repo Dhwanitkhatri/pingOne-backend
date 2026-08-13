@@ -18,6 +18,7 @@ model Platform {
   preferredByContacts Contact[]
   jobRecipients       JobRecipient[]
   deliveries          MessageDelivery[]
+  replies             ContactReply[]
   templates           Template[]
   credentials         UserPlatformCredential[]
 
@@ -69,6 +70,7 @@ model User {
   contacts                Contact[]
   messages                Message[]
   notificationPreferences NotificationPreference?
+  notifications           Notification[]
   passwordResetTokens     PasswordResetToken[]
   refreshTokens           RefreshToken[]
   scheduledJobs           ScheduledJob[]
@@ -148,6 +150,25 @@ model NotificationPreference {
   @@map("notification_preferences")
 }
 
+/// User-facing operational alerts. `in_app` is the durable push payload; a
+/// browser/mobile gateway can consume these rows after a device reconnects.
+model Notification {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  deliveryId  Int?      @unique @map("delivery_id")
+  type        String    @db.VarChar(50)
+  title       String    @db.VarChar(255)
+  body        String
+  channel     String    @default("in_app") @db.VarChar(20)
+  emailSentAt DateTime? @map("email_sent_at") @db.Timestamp(6)
+  readAt      DateTime? @map("read_at") @db.Timestamp(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, createdAt], map: "idx_notifications_user_created")
+  @@map("notifications")
+}
+
 model Contact {
   id                  Int                     @id @default(autoincrement())
   userId              Int                     @map("user_id")
@@ -165,9 +186,24 @@ model Contact {
   user                User                    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   jobRecipients       JobRecipient[]
   deliveries          MessageDelivery[]
+  replies             ContactReply[]
 
   @@index([userId], map: "idx_contacts_user_id")
   @@map("contacts")
+}
+
+/// Inbound replies. Content is intentionally not retained: smart-send only
+/// needs the time, sender, and platform.
+model ContactReply {
+  id         Int      @id @default(autoincrement())
+  contactId  Int      @map("contact_id")
+  platformId Int      @map("platform_id") @db.SmallInt
+  repliedAt  DateTime @default(now()) @map("replied_at") @db.Timestamp(6)
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  platform   Platform @relation(fields: [platformId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([contactId, platformId, repliedAt], map: "idx_contact_replies_lookup")
+  @@map("contact_replies")
 }
 
 model ContactPhone {
@@ -327,6 +363,7 @@ model ScheduledJob {
   /// skipped during catch-up too, so RecurrenceRule.maxOccurrences stays
   /// accurate across worker downtime.
   occurrenceCount  Int               @default(0) @map("occurrence_count")
+  skipIfReplied    Boolean           @default(false) @map("skip_if_replied")
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
   recipients       JobRecipient[]

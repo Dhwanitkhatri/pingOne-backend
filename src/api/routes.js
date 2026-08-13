@@ -13,6 +13,7 @@ import platformRoutes from '../modules/platforms/platforms.routes.js';
 import contactRoutes from '../modules/contacts/contacts.routes.js';
 import groupRoutes from '../modules/groups/groups.routes.js';
 import userRoutes from '../modules/users/users.routes.js';
+import notificationRoutes from '../modules/notifications/notifications.routes.js';
 
 import messageRoutes from '../modules/messages/messages.routes.js';
 import schedulerRoutes from '../modules/scheduler/scheduler.routes.js';
@@ -40,6 +41,7 @@ router.use('/credentials', platformRoutes);
 router.use('/contacts', contactRoutes);
 router.use('/groups', groupRoutes);
 router.use('/users', userRoutes);
+router.use('/notifications', notificationRoutes);
 router.use('/messages', messageRoutes);
 router.use('/scheduler', schedulerRoutes);
 router.use('/templates', templateRoutes);
