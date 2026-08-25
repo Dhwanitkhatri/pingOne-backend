@@ -93,6 +93,40 @@ npm start
 ```
 Server: `http://localhost:4000` · Health: `http://localhost:4000/api/v1/health`
 
+### 5. Run the worker (in a separate terminal)
+```bash
+npm run worker    # or: npm run dev:worker for nodemon
+# or
+node src/worker.js
+```
+Worker: `http://localhost:4001/health/live`
+
+---
+
+## Worker Process — Production-Ready Enhancements
+
+The worker process handles background jobs: scheduling, delivery, and retries. It now includes:
+
+✅ **Job Priorities** — Process high-priority messages first (high/normal/low)  
+✅ **Graceful Shutdown** — Complete in-flight jobs before exit (SIGTERM-safe)  
+✅ **Dead-Letter Queues** — Track permanently failed jobs for manual intervention  
+✅ **Health Checks** — Real-time queue metrics and worker status  
+
+Quick start:
+
+```bash
+# Start worker with health checks on port 4001
+npm run worker
+
+# Check worker health (requires auth)
+curl -H "Authorization: Bearer <token>" \
+  http://localhost:4001/worker-health
+
+# Kubernetes readiness/liveness (unauthenticated)
+curl http://localhost:4001/health/live   # 200 if worker is alive
+curl http://localhost:4001/health/ready  # 200 if ready for traffic
+```
+
 ---
 
 ## Auth API (`/api/v1/auth`)

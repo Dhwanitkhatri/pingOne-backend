@@ -47,6 +47,17 @@ export const CHANGED_BY = Object.freeze({
   USER: 'user',
 });
 
+/**
+ * Job priority levels for message delivery and retry processing.
+ * Higher numeric values = higher priority (processed first).
+ * Used in BullMQ job options for fair-work scheduling.
+ */
+export const JOB_PRIORITY = Object.freeze({
+  LOW: 10,
+  NORMAL: 5,
+  HIGH: 1,
+});
+
 export const RECURRENCE_TYPE = Object.freeze({
   ONCE: 'none', // matches seed.js's actual code — the seed calls it "none", not "once"
   DAILY: 'daily',

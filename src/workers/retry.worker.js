@@ -5,14 +5,17 @@
 // simply re-enqueues the delivery for another real attempt.
 //
 // Attempt 1 fails -> wait 30s -> Attempt 2 -> wait 2min -> Attempt 3
-// -> wait 10min -> Attempt 4 -> still failing -> permanently Failed
+// -> wait 10min -> Attempt 4 -> still failing -> moved to DLQ
 // (handled in delivery.worker.js's handleFailure once MAX_RETRY_ATTEMPTS
 // is exceeded).
+//
+// Supports graceful shutdown to ensure in-flight retries complete before exit.
 // ============================================================
 
 import { Worker } from 'bullmq';
-import { connection, QUEUE_NAMES, attachErrorLogging } from '../queue/bull.queue.js';
+import { connection, QUEUE_NAMES, attachErrorLogging, retryQueue } from '../queue/bull.queue.js';
 import { enqueueDelivery } from '../queue/queue.service.js';
+import { workerManager } from '../utils/worker-manager.js';
 
 export function startRetryWorker() {
   const worker = new Worker(
@@ -22,10 +25,33 @@ export function startRetryWorker() {
       console.log(`[retry] re-attempting delivery ${deliveryId} (attempt ${attemptNumber + 1})`);
       await enqueueDelivery(deliveryId);
     },
-    { connection, concurrency: 5 }
+    {
+      connection,
+      concurrency: 5,
+      settings: {
+        lockDuration: 30_000,
+        lockRenewTime: 15_000,
+        maxStalledCount: 2,
+      },
+    }
   );
 
-  worker.on('failed', (job, err) => console.error(`[retry] job ${job?.id} failed:`, err.message));
+  worker.on('completed', (job) => {
+    console.log(`[retry] job ${job.id} completed (delivery_id: ${job.data.deliveryId}, attempt: ${job.data.attemptNumber + 1})`);
+    workerManager.recordJobCompleted('retry');
+  });
+
+  worker.on('failed', (job, err) => {
+    console.error(`[retry] job ${job?.id} failed (delivery_id: ${job?.data?.deliveryId}):`, err.message);
+    workerManager.recordJobFailed('retry');
+  });
+
+  worker.on('stalled', (jobId) => {
+    console.warn(`[retry] job ${jobId} stalled (will retry)`);
+  });
+
+  // Register with worker manager for health checks and graceful shutdown
+  workerManager.register('retry', worker, retryQueue, true);
 
   return attachErrorLogging(worker, 'worker:retry');
 }

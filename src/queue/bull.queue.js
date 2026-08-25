@@ -72,16 +72,78 @@ connection.on('ready', () => {
 export const QUEUE_NAMES = Object.freeze({
   DELIVERY: 'delivery',
   RETRY: 'retry',
+  DELIVERY_DLQ: 'delivery_dlq',
+  RETRY_DLQ: 'retry_dlq',
+});
+
+// ============================================================
+// Queue configuration for priority and dead-letter handling
+// ============================================================
+const QUEUE_CONFIG = Object.freeze({
+  [QUEUE_NAMES.DELIVERY]: {
+    settings: {
+      defaultJobOptions: {
+        removeOnComplete: 500, // keep last 500 successful jobs for audit
+        removeOnFail: 1000, // keep last 1000 failed jobs for debugging
+        attempts: 1, // no automatic retries; we handle retries via retryQueue
+      },
+    },
+  },
+  [QUEUE_NAMES.RETRY]: {
+    settings: {
+      defaultJobOptions: {
+        removeOnComplete: 500,
+        removeOnFail: 1000,
+        attempts: 1,
+      },
+    },
+  },
 });
 
 // Queues need the listener as much as Workers do — each holds its own
 // RedisConnection, and BullMQ's QueueBase console.errors the raw error object
 // when nothing is listening.
 export const deliveryQueue = attachErrorLogging(
-  new Queue(QUEUE_NAMES.DELIVERY, { connection }),
+  new Queue(QUEUE_NAMES.DELIVERY, { connection, ...QUEUE_CONFIG[QUEUE_NAMES.DELIVERY] }),
   'queue:delivery'
 );
 export const retryQueue = attachErrorLogging(
-  new Queue(QUEUE_NAMES.RETRY, { connection }),
+  new Queue(QUEUE_NAMES.RETRY, { connection, ...QUEUE_CONFIG[QUEUE_NAMES.RETRY] }),
   'queue:retry'
 );
+
+// Dead-letter queues for permanent failures. Jobs moved here have exhausted
+// all retries and will not be retried further. These are read-only from the
+// worker perspective; they exist for audit and manual intervention.
+export const deliveryDLQ = attachErrorLogging(
+  new Queue(QUEUE_NAMES.DELIVERY_DLQ, { connection }),
+  'queue:delivery:dlq'
+);
+export const retryDLQ = attachErrorLogging(
+  new Queue(QUEUE_NAMES.RETRY_DLQ, { connection }),
+  'queue:retry:dlq'
+);
+
+/**
+ * Move a failed job to the dead-letter queue.
+ * @param {Queue} queue - The source queue
+ * @param {string} dlqName - The DLQ name
+ * @param {Job} job - The failed job
+ * @param {Error} reason - The failure reason
+ */
+export async function moveToDeadLetterQueue(queue, dlqName, job, reason) {
+  const dlq = new Queue(dlqName, { connection });
+  await dlq.add(job.name, job.data, {
+    ...job.opts,
+    data: {
+      ...job.data,
+      failureReason: reason.message,
+      failureStack: reason.stack,
+      movedFromQueue: queue.name,
+      movedAt: new Date().toISOString(),
+      originalJobId: job.id,
+      retryCount: job.attemptsMade,
+    },
+  });
+  await dlq.close();
+}

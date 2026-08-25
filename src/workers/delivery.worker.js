@@ -8,10 +8,13 @@
 // Status writes all go through deliveries/delivery-status.service so the
 // audit trail in delivery_status_logs is identical whether a change came from
 // here or from an inbound platform webhook.
+//
+// Supports job priorities (high/normal/low) and dead-letter queues for
+// permanently failed deliveries.
 // ============================================================
 
 import { Worker } from 'bullmq';
-import { connection, QUEUE_NAMES, attachErrorLogging } from '../queue/bull.queue.js';
+import { connection, QUEUE_NAMES, attachErrorLogging, moveToDeadLetterQueue, deliveryQueue } from '../queue/bull.queue.js';
 import { prisma } from '../config/prisma.js';
 import { getAdapter } from '../platforms/adapter.registry.js';
 import { resolveRecipientHandle } from '../modules/scheduler/recipient-resolver.js';
@@ -20,16 +23,39 @@ import { transitionStatus } from '../modules/deliveries/delivery-status.service.
 import { loadAttachmentsForSend } from '../modules/messages/attachments.service.js';
 import { MESSAGE_STATUS, CHANGED_BY } from '../constants/codes.js';
 import { notifyPermanentFailure } from '../modules/notifications/notifications.service.js';
+import { workerManager } from '../utils/worker-manager.js';
 import * as platformsService from '../modules/platforms/platforms.service.js'; // teammate's module — owns credential storage/decryption
 
 /** A webhook already confirmed these — re-sending would duplicate the message. */
 const ALREADY_CONFIRMED = new Set([MESSAGE_STATUS.DELIVERED, MESSAGE_STATUS.READ]);
 
 export function startDeliveryWorker() {
-  const worker = new Worker(QUEUE_NAMES.DELIVERY, processDeliveryJob, { connection, concurrency: 5 });
+  const worker = new Worker(QUEUE_NAMES.DELIVERY, processDeliveryJob, {
+    connection,
+    concurrency: 5,
+    settings: {
+      lockDuration: 30_000, // lock each job for 30s (must complete or retry)
+      lockRenewTime: 15_000, // renew lock every 15s during long processing
+      maxStalledCount: 2, // move to failed after 2 stalled attempts
+    },
+  });
 
-  worker.on('completed', (job) => console.log(`[delivery] job ${job.id} completed`));
-  worker.on('failed', (job, err) => console.error(`[delivery] job ${job?.id} failed:`, err.message));
+  worker.on('completed', (job) => {
+    console.log(`[delivery] job ${job.id} completed (delivery_id: ${job.data.deliveryId})`);
+    workerManager.recordJobCompleted('delivery');
+  });
+
+  worker.on('failed', async (job, err) => {
+    console.error(`[delivery] job ${job?.id} failed (delivery_id: ${job?.data?.deliveryId}):`, err.message);
+    workerManager.recordJobFailed('delivery');
+  });
+
+  worker.on('stalled', (jobId) => {
+    console.warn(`[delivery] job ${jobId} stalled (will retry)`);
+  });
+
+  // Register with worker manager for health checks and graceful shutdown
+  workerManager.register('delivery', worker, deliveryQueue, true);
 
   return attachErrorLogging(worker, 'worker:delivery');
 }
@@ -131,6 +157,20 @@ async function handleFailure(delivery, err) {
     console.error(
       `[delivery] delivery ${delivery.id} permanently failed after ${nextAttempt} attempt(s): ${err.message}`
     );
+
+    // Move to dead-letter queue for manual inspection / recovery
+    try {
+      await moveToDeadLetterQueue(
+        deliveryQueue,
+        QUEUE_NAMES.DELIVERY_DLQ,
+        { id: delivery.id, name: 'send', data: { deliveryId: delivery.id }, attemptsMade: nextAttempt },
+        err
+      );
+      console.log(`[delivery] moved delivery ${delivery.id} to dead-letter queue`);
+    } catch (dlqErr) {
+      console.error(`[delivery] failed to move delivery ${delivery.id} to DLQ:`, dlqErr.message);
+    }
+
     await notifyPermanentFailure(delivery, { attempts: nextAttempt, reason: err.message });
   }
 }
