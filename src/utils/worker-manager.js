@@ -44,6 +44,43 @@ class WorkerManager {
   }
 
   /**
+   * Safely read queue counts from BullMQ queue objects or fall back to zeros.
+   * Some scheduler entries are lightweight pseudo-queues that may not expose the
+   * same API surface as a full BullMQ queue.
+   * @param {object} entry - Worker registry entry
+   * @returns {Promise<object>} Queue counts object
+   */
+  async getQueueCounts(entry) {
+    if (!entry || !entry.queue) {
+      return { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 };
+    }
+
+    if (typeof entry.queue.getCountsPerStatus === 'function') {
+      const counts = await entry.queue.getCountsPerStatus();
+      return {
+        waiting: counts?.waiting || 0,
+        active: counts?.active || 0,
+        completed: counts?.completed || 0,
+        failed: counts?.failed || 0,
+        delayed: counts?.delayed || 0,
+      };
+    }
+
+    if (typeof entry.worker?.getMetrics === 'function') {
+      const metrics = await entry.worker.getMetrics();
+      return {
+        waiting: metrics?.waiting || 0,
+        active: metrics?.active || 0,
+        completed: metrics?.completed || 0,
+        failed: metrics?.failed || 0,
+        delayed: metrics?.delayed || 0,
+      };
+    }
+
+    return { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 };
+  }
+
+  /**
    * Get status snapshot of a single worker.
    * @param {string} name - Worker name
    * @returns {object} Status object with queue stats
@@ -53,7 +90,7 @@ class WorkerManager {
     if (!entry) return null;
 
     try {
-      const counts = await entry.queue.getCountsPerStatus();
+      const counts = await this.getQueueCounts(entry);
       const waitingCount = counts.waiting || 0;
       const activeCount = counts.active || 0;
       const completedCount = counts.completed || 0;
@@ -192,7 +229,7 @@ class WorkerManager {
       while (Date.now() - startTime < this.shutdownTimeout && !allDone) {
         allDone = true;
         for (const [, entry] of this.workers) {
-          const counts = await entry.queue.getCountsPerStatus();
+          const counts = await this.getQueueCounts(entry);
           if (counts.active > 0) {
             allDone = false;
             const elapsed = Math.round((Date.now() - startTime) / 1000);
