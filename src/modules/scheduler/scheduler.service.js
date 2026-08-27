@@ -6,13 +6,43 @@
 import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { lookupByCode } from '../../utils/lookupCache.js';
+import { getPlatformId } from '../../utils/platforms.js';
+import { assertQueueReachable } from '../../queue/queue.service.js';
 import { MESSAGE_STATUS } from '../../constants/codes.js';
+import { fireJob, FIRE_JOB_INCLUDE } from './dispatch.js';
 import * as messagesService from '../messages/messages.service.js'; // reuse their create logic — includes template-ownership check
+
+/**
+ * What a job returns to the client.
+ *
+ * Recipients and deliveries are resolved down to platform CODES and contact
+ * names, never the raw numeric FKs: the ids are internal to the reference
+ * tables and a client has no way to interpret them. `deliveries` is what
+ * turns this endpoint into the message history — one row per (contact,
+ * platform) with its own status and error, which is the granularity the UI
+ * shows. It's empty until the job fires.
+ */
+const contactSelect = { select: { id: true, firstName: true, lastName: true } };
+const platformSelect = { select: { code: true, name: true } };
 
 const include = {
   message: { include: { template: true } },
   recurrenceRule: { include: { recurrenceType: true } },
-  recipients: true,
+  recipients: {
+    include: {
+      platform: platformSelect,
+      contact: contactSelect,
+      group: { select: { id: true, name: true } },
+    },
+  },
+  deliveries: {
+    include: {
+      platform: platformSelect,
+      contact: contactSelect,
+      status: { select: { code: true } },
+    },
+    orderBy: { id: 'asc' },
+  },
   status: true,
 };
 
@@ -28,6 +58,7 @@ export async function getSchedule(userId, jobId) {
 
 export async function createSchedule(userId, { messageId, message, scheduledAt, recurrence, recipients, skipIfReplied }) {
   const pendingStatus = await lookupByCode('messageStatus', MESSAGE_STATUS.PENDING);
+  const resolvedRecipients = await resolveRecipients(recipients);
 
   return prisma.$transaction(async (tx) => {
     const resolvedMessageId = messageId ?? (await createInlineMessage(userId, message));
@@ -43,7 +74,7 @@ export async function createSchedule(userId, { messageId, message, scheduledAt, 
         scheduledAt,
         skipIfReplied,
         nextRunAt: scheduledAt, // scheduler worker fires it once this passes
-        recipients: { create: recipients },
+        recipients: { create: resolvedRecipients },
       },
       include,
     });
@@ -63,8 +94,9 @@ export async function updateSchedule(userId, jobId, patch) {
     }
 
     if (patch.recipients) {
+      const resolved = await resolveRecipients(patch.recipients);
       await tx.jobRecipient.deleteMany({ where: { jobId } });
-      await tx.jobRecipient.createMany({ data: patch.recipients.map((r) => ({ ...r, jobId })) });
+      await tx.jobRecipient.createMany({ data: resolved.map((r) => ({ ...r, jobId })) });
     }
 
     return tx.scheduledJob.update({
@@ -98,7 +130,75 @@ export async function cancelSchedule(userId, jobId) {
   await prisma.scheduledJob.delete({ where: { id: jobId } });
 }
 
+/**
+ * POST /messages/send — the composer's one entry point.
+ *
+ * `scheduledAt` decides the behaviour: absent or already past means send
+ * now, a future time means leave a pending job for the scheduler worker.
+ *
+ * "Send now" is the same code path as a scheduled send, just fired
+ * immediately instead of on the next poll — same expansion, same rows, same
+ * queue — so an immediate send and a scheduled one can never drift apart.
+ *
+ * @returns {Promise<{ mode: 'sent'|'scheduled', job: object, deliveries: number,
+ *                     skippedRepliers: number }>}
+ */
+export async function sendOrSchedule(
+  userId,
+  { messageId, content, templateId, scheduledAt, recipients, skipIfReplied }
+) {
+  const when = scheduledAt ?? new Date();
+  const immediate = when.getTime() <= Date.now();
+
+  // Check the queue BEFORE writing anything: a send we can't dispatch should
+  // leave no job and no deliveries behind. Scheduled sends skip this — the
+  // worker needs Redis when it fires, not when the row is created.
+  if (immediate) await assertQueueReachable();
+
+  const job = await createSchedule(userId, {
+    messageId,
+    message: messageId ? undefined : { content, templateId },
+    scheduledAt: when,
+    recurrence: undefined, // the composer only creates one-time sends
+    recipients,
+    skipIfReplied: skipIfReplied ?? false,
+  });
+
+  if (!immediate) {
+    return { mode: 'scheduled', job, deliveries: 0, skippedRepliers: 0 };
+  }
+
+  const [pendingStatus, sentStatus, loaded] = await Promise.all([
+    lookupByCode('messageStatus', MESSAGE_STATUS.PENDING),
+    lookupByCode('messageStatus', MESSAGE_STATUS.SENT),
+    prisma.scheduledJob.findUnique({ where: { id: job.id }, include: FIRE_JOB_INCLUDE }),
+  ]);
+
+  const result = await fireJob(loaded, pendingStatus.id, sentStatus.id);
+
+  return {
+    mode: 'sent',
+    job: await getSchedule(userId, job.id),
+    deliveries: result.deliveries,
+    skippedRepliers: result.skippedRepliers,
+  };
+}
+
 // ---- internal helpers ----------------------------------------------
+
+/**
+ * Turn `{ platform: "sms" }` into `{ platformId: 4 }`, leaving recipients
+ * that already carry a numeric id untouched. An unknown code fails here with
+ * a clear message rather than as a foreign-key violation three layers down.
+ */
+async function resolveRecipients(recipients) {
+  return Promise.all(
+    recipients.map(async ({ platform, platformId, ...rest }) => ({
+      ...rest,
+      platformId: platformId ?? (await getPlatformId(platform)),
+    }))
+  );
+}
 
 // NOTE: intentionally NOT run inside the outer $transaction — messagesService
 // uses the shared `prisma` client, not the `tx` transaction client, so it

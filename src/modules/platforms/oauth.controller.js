@@ -32,9 +32,26 @@ export const googleCallback = asyncHandler(async (req, res) => {
   );
 });
 
+export const startTwilio = asyncHandler(async (req, res) => {
+  const result = oauthService.startTwilio(req.user.id);
+  respondWithAuthorizationUrl(req, res, result, 'sms');
+});
+
 export const metaCallback = asyncHandler(async (req, res) => {
   await handleCallback(res, req.query, 'whatsapp', () =>
     oauthService.completeMeta({ code: req.query.code, state: req.query.state })
+  );
+});
+
+// Twilio Connect returns the authorized AccountSid where an OAuth2 provider
+// would return a `code`, so the shared handler is told which param to require.
+export const twilioCallback = asyncHandler(async (req, res) => {
+  await handleCallback(
+    res,
+    req.query,
+    'sms',
+    () => oauthService.completeTwilio({ accountSid: req.query.AccountSid, state: req.query.state }),
+    { grantParam: 'AccountSid' }
   );
 });
 
@@ -57,7 +74,7 @@ function respondWithAuthorizationUrl(req, res, { authorizationUrl, state }, plat
  * consent screen or a failed exchange into a readable page instead of a
  * raw API error.
  */
-async function handleCallback(res, query, platform, complete) {
+async function handleCallback(res, query, platform, complete, { grantParam = 'code' } = {}) {
   // The user pressed "Cancel" (or the provider refused before we were involved).
   const providerError = query.error ?? query.error_message;
   if (providerError) {
@@ -72,11 +89,11 @@ async function handleCallback(res, query, platform, complete) {
     });
   }
 
-  if (!query.code || !query.state) {
+  if (!query[grantParam] || !query.state) {
     return finish(res, 400, {
       platform,
       status: 'error',
-      message: 'The provider redirect was missing its code or state parameter.',
+      message: `The provider redirect was missing its ${grantParam} or state parameter.`,
     });
   }
 
@@ -86,9 +103,12 @@ async function handleCallback(res, query, platform, complete) {
       platform: result.platform,
       status: 'connected',
       account: result.account ?? undefined,
-      message: result.needsPhoneNumberId
-        ? 'Connected, but no WhatsApp phone number was found — set phoneNumberId via POST /platforms/whatsapp before sending.'
-        : 'Account connected. You can close this window.',
+      message:
+        (result.needsPhoneNumberId &&
+          'Connected, but no WhatsApp phone number was found — set phoneNumberId via POST /platforms/whatsapp before sending.') ||
+        (result.needsTwilioNumber &&
+          'Connected, but that Twilio account owns no SMS number — buy one in the Twilio console, then reconnect.') ||
+        'Account connected. You can close this window.',
     });
   } catch (err) {
     return finish(res, err.statusCode ?? 502, {

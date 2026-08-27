@@ -85,3 +85,23 @@ export const oauthCallbackQuerySchema = z
     error_message: z.string().optional(),
   })
   .passthrough();
+
+/**
+ * Twilio Connect callback query. Twilio has no code-for-token step: on
+ * approval it returns the AccountSid the user authorized, and on refusal an
+ * `error` (typically `unauthorized_client`). Both are optional here so the
+ * controller can render a readable page instead of a 400 from validation.
+ */
+export const twilioCallbackQuerySchema = z
+  .object({
+    AccountSid: z
+      .string()
+      .trim()
+      .regex(/^AC[0-9a-fA-F]{32}$/, 'AccountSid must start with "AC" and be 34 characters')
+      .optional(),
+    state: z.string().min(1).optional(),
+    error: z.string().optional(),
+    error_description: z.string().optional(),
+    error_message: z.string().optional(),
+  })
+  .passthrough();

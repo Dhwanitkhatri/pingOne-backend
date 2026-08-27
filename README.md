@@ -61,6 +61,10 @@ Each feature is a **module** (`routes → controller → service → schema`). A
 ### 1. Prerequisites
 - Node.js ≥ 20
 - A running PostgreSQL instance (local install, or `docker run --name pingone-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pingone -p 5432:5432 -d postgres:16`)
+- Redis, for the delivery queue — a local `redis-server` on the default port, or
+  `docker run -p 6379:6379 redis`. The API boots without it and every non-queue endpoint
+  works, but `POST /messages/send` needs it to dispatch immediately (see below) and the
+  worker needs it to deliver anything at all.
 
 ### 2. Install & configure
 ```bash
@@ -100,6 +104,10 @@ npm run worker    # or: npm run dev:worker for nodemon
 node src/worker.js
 ```
 Worker: `http://localhost:4001/health/live`
+
+Nothing is actually delivered without this process: `POST /messages/send` only gets a
+message as far as the queue. The worker is what pulls each delivery off it and calls the
+platform's API.
 
 ---
 
@@ -235,11 +243,11 @@ Twilio → auth token.
 
 ---
 
-## Platform OAuth (`/api/v1/auth/google`, `/api/v1/auth/meta`)
+## Platform OAuth (`/api/v1/auth/google`, `/auth/meta`, `/auth/twilio`)
 
-Browser flows for the two providers that support OAuth. Both are **optional** — leave the
-credentials unset and the API still boots; the start endpoints then return a `503` naming
-exactly what to configure.
+Browser flows for the three providers that support delegated authorization. All are
+**optional** — leave the credentials unset and the API still boots; the start endpoints then
+return a `503` naming exactly what to configure.
 
 | Method | Path                    | Auth   | Purpose                                    |
 | ------ | ----------------------- | ------ | ------------------------------------------ |
@@ -247,6 +255,8 @@ exactly what to configure.
 | GET    | `/auth/google/callback` | public | Provider redirect (stores the credential)  |
 | GET    | `/auth/meta`            | Bearer | Start WhatsApp OAuth → `{ authorizationUrl }` |
 | GET    | `/auth/meta/callback`   | public | Provider redirect (stores the credential)  |
+| GET    | `/auth/twilio`          | Bearer | Start Twilio Connect → `{ authorizationUrl }` |
+| GET    | `/auth/twilio/callback` | public | Twilio redirect (stores the credential)    |
 
 **How the flow works.** A single-page app can't attach an `Authorization` header to a
 top-level redirect, so the start endpoints answer with JSON and let the frontend navigate:
@@ -272,6 +282,35 @@ confirmation page. Declining consent renders a readable error page, not a raw AP
 - **Meta** upgrades the code to a long-lived (~60 day) token and *best-effort* discovers the
   WhatsApp Business Account and phone-number id. If permissions are too narrow to resolve
   them the credential is still stored, and the response says the phone number is pending.
+
+### Twilio Connect
+
+Connect is **not OAuth2** — there is no code-for-token exchange. The user approves the
+Connect App at `twilio.com/authorize/{ConnectAppSid}` and Twilio redirects back with the
+`AccountSid` they authorized (or `?error=unauthorized_client` if they refused). Every
+subsequent REST call for that user is signed with
+
+```
+Basic base64(<their AccountSid>:<OUR TWILIO_AUTH_TOKEN>)
+```
+
+their sid as the username, **this server's** auth token as the password. So the three
+`TWILIO_*` variables are ours, not the end user's, and the secret stored per user is our own
+auth token — which is exactly the `secret` + `extra_info.account_sid` pair `SmsAdapter`
+already sends with, so nothing downstream changes. Connect-granted credentials carry
+`extra_info.connect = true`; revoking one means removing the Connect App grant in the user's
+own Twilio console, not rotating a token they hold.
+
+Because Twilio takes the callback URL from the Connect App's dashboard configuration rather
+than the authorize request, there is no `TWILIO_REDIRECT_URI`: set **Authorize Redirect URL**
+to `{PUBLIC_BASE_URL}/api/v1/auth/twilio/callback` in the console, and grant the app "Post to
+all Twilio APIs and access all Twilio data".
+
+Instead of a token exchange, the callback reads the account back with our auth token — proof
+the grant is live before anything is stored — then *best-effort* discovers an SMS-capable
+number. An account that owns no number still connects; the response says the number is
+pending. The manual `POST /platforms/twilio` path (SID + auth token + number) is unaffected
+and keeps working whether or not Connect is configured.
 
 ---
 
@@ -387,6 +426,7 @@ client can poll this endpoint or use it as the source for its push gateway.
 
 | Method | Path                                       | Body / notes                                          |
 | ------ | ------------------------------------------ | ----------------------------------------------------- |
+| POST   | `/messages/send`                           | compose + dispatch in one call — see below            |
 | POST   | `/messages`                                | `content`, optional `templateId`                      |
 | GET    | `/messages`                                | – (includes each message's attachments)               |
 | GET    | `/messages/:id`                            | –                                                     |
@@ -395,6 +435,49 @@ client can poll this endpoint or use it as the source for its push gateway.
 | POST   | `/messages/:id/attachments`                | `multipart/form-data`, field **`files`** (1–5 files)  |
 | GET    | `/messages/:id/attachments`                | –                                                     |
 | DELETE | `/messages/:id/attachments/:attachmentId`  | refused once the message has been sent                |
+
+### Sending — `POST /messages/send`
+
+The composer's one entry point. It creates the message, creates a one-time `ScheduledJob`,
+and either fires it immediately or leaves it for the scheduler worker:
+
+```jsonc
+{
+  "content": "Sprint review moved to Thursday 11:00.",
+  // omit to send now; a future time schedules instead
+  "scheduledAt": "2026-08-27T09:00:00.000Z",
+  "recipients": [
+    { "contactId": 12, "platform": "gmail" },
+    { "contactId": 12, "platform": "sms" },
+    { "groupId": 3,    "platform": "telegram" }
+  ]
+}
+```
+
+Each recipient is one **(who, where)** pair: exactly one of `contactId` / `groupId`, and
+exactly one of `platform` (the code) / `platformId` (numeric, still accepted for existing
+callers). Codes are what clients should send — ids are an internal detail of the platforms
+table that no endpoint exposes. Groups expand to their members at firing time, and
+duplicate (contact, platform) pairs collapse, so one delivery per person per channel.
+
+The address is resolved server-side — primary email for Gmail, primary phone for SMS and
+WhatsApp, the stored handle for Telegram — so clients never send phone numbers or emails,
+only `contactId`.
+
+`scheduledAt` is the only difference between the two behaviours:
+
+| `scheduledAt`      | Response  | What happens                                              |
+| ------------------ | --------- | --------------------------------------------------------- |
+| omitted, or past   | `200`, `mode: "sent"`      | Deliveries created and queued right away |
+| a future time      | `201`, `mode: "scheduled"` | Job left pending; the worker fires it    |
+
+Both paths run the same code (`modules/scheduler/dispatch.js`) — an immediate send is just
+a scheduled one fired without waiting for the next poll, so the two can't drift apart.
+
+> **Sending now needs Redis; scheduling doesn't.** An immediate send checks the queue
+> *before* writing anything and returns `503 QUEUE_UNAVAILABLE` if it's unreachable, so a
+> failed send never leaves orphan deliveries behind. A scheduled send only touches the
+> database — Redis is needed later, when the worker fires it.
 
 ### Attachments
 

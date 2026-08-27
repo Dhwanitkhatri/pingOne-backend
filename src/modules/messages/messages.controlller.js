@@ -4,7 +4,28 @@
 // ============================================================
 
 import * as messageService from "./messages.service.js";
+import * as schedulerService from "../scheduler/scheduler.service.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
+
+/**
+ * POST /messages/send
+ *
+ * Compose and dispatch in one call — the composer's single entry point.
+ * Omit `scheduledAt` to send now, pass a future time to schedule. The work
+ * itself lives in the scheduler service, because both cases produce the same
+ * ScheduledJob and the same MessageDelivery rows.
+ */
+export const sendMessage = asyncHandler(async (req, res) => {
+  const result = await schedulerService.sendOrSchedule(req.user.id, req.body);
+  const sent = result.mode === "sent";
+
+  res.status(sent ? 200 : 201).json({
+    message: sent
+      ? `Queued ${result.deliveries} delivery(ies)`
+      : `Scheduled for ${result.job.scheduledAt.toISOString()}`,
+    data: result,
+  });
+});
 
 /**
  * POST /messages

@@ -16,6 +16,7 @@ import { issueOAuthState, verifyOAuthState } from '../../utils/token.js';
 import { AppError } from '../../utils/AppError.js';
 import * as google from './providers/google.provider.js';
 import * as meta from './providers/meta.provider.js';
+import * as twilio from './providers/twilio.provider.js';
 import * as platformsService from './platforms.service.js';
 
 // ---- Google / Gmail ------------------------------------------------
@@ -91,6 +92,47 @@ export async function completeMeta({ code, state }) {
     platform: 'whatsapp',
     account: target.displayPhoneNumber ?? target.businessAccountId ?? null,
     needsPhoneNumberId: !target.phoneNumberId,
+    credential,
+  };
+}
+
+// ---- Twilio Connect / SMS ------------------------------------------
+
+/** @returns {{ authorizationUrl: string, state: string }} */
+export function startTwilio(userId) {
+  twilio.assertConfigured();
+
+  const state = issueOAuthState({ userId, platform: 'twilio' });
+  return { authorizationUrl: twilio.buildAuthorizationUrl(state), state };
+}
+
+/**
+ * Finish the Twilio Connect flow. Unlike Google and Meta there is no code to
+ * exchange — Twilio hands back the AccountSid it authorized, and the proof
+ * that the grant works is that our auth token can read the account.
+ *
+ * The sending number is discovered best-effort; without one the credential is
+ * still stored and the response says the number is pending.
+ *
+ * @param {{ accountSid: string, state: string }} params
+ */
+export async function completeTwilio({ accountSid, state }) {
+  const { userId } = verifyOAuthState(state, 'twilio');
+
+  const account = await twilio.fetchAuthorizedAccount(accountSid);
+  const { phoneNumber } = await twilio.discoverSendingNumber(account.accountSid);
+
+  const credential = await platformsService.connectTwilioConnect(userId, {
+    accountSid: account.accountSid,
+    accountName: account.friendlyName,
+    twilioNumber: phoneNumber ?? null,
+  });
+
+  return {
+    userId,
+    platform: 'sms',
+    account: phoneNumber ?? account.friendlyName ?? account.accountSid,
+    needsTwilioNumber: !phoneNumber,
     credential,
   };
 }

@@ -1,6 +1,7 @@
 // ============================================================
 // Message Routes
 //
+// POST    /messages/send                            send now, or schedule
 // POST    /messages
 // GET     /messages
 // GET     /messages/:id
@@ -27,11 +28,21 @@ import {
   createMessageSchema,
   updateMessageSchema,
 } from "./messages.schema.js";
+// Sending is a scheduler concern (it creates a ScheduledJob), so its schema
+// lives with the scheduler even though the route reads as a message action.
+import { sendMessageSchema } from "../scheduler/scheduler.schema.js";
 
 const router = Router();
 
 // Protect every route
 router.use(authenticate);
+
+// Send or schedule — registered before "/" so the literal path wins.
+router.post(
+  "/send",
+  validate({ body: sendMessageSchema }),
+  messageController.sendMessage
+);
 
 // Create
 router.post(

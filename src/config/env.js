@@ -8,6 +8,15 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+/**
+ * An optional variable left blank in `.env` (`GOOGLE_CLIENT_ID=`) arrives as
+ * an empty string, not as undefined — which would fail `.min(1)` and stop the
+ * app from booting over a placeholder line. Treat blank as "not set" so the
+ * provider simply reports itself unconfigured, as designed.
+ */
+const optional = (schema) =>
+  z.preprocess((val) => (typeof val === 'string' && val.trim() === '' ? undefined : val), schema);
+
 const envSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -53,22 +62,49 @@ const envSchema = z.object({
 
   // Where the browser lands after an OAuth callback finishes. The result is
   // appended as query params (?platform=…&status=connected|error).
-  OAUTH_SUCCESS_REDIRECT: z.string().url().optional(),
+  OAUTH_SUCCESS_REDIRECT: optional(z.string().url().optional()),
 
   // ---- Google / Gmail OAuth (optional) ----------------------------
   // Leave unset to run without Google: /auth/google then returns a clear
   // 503 instead of the app failing to boot.
-  GOOGLE_CLIENT_ID: z.string().trim().min(1).optional(),
-  GOOGLE_CLIENT_SECRET: z.string().trim().min(1).optional(),
-  GOOGLE_REDIRECT_URI: z.string().url().optional(),
+  GOOGLE_CLIENT_ID: optional(z.string().trim().min(1).optional()),
+  GOOGLE_CLIENT_SECRET: optional(z.string().trim().min(1).optional()),
+  GOOGLE_REDIRECT_URI: optional(z.string().url().optional()),
 
   // ---- Meta / WhatsApp OAuth (optional) ---------------------------
-  META_APP_ID: z.string().trim().min(1).optional(),
-  META_APP_SECRET: z.string().trim().min(1).optional(),
-  META_REDIRECT_URI: z.string().url().optional(),
+  META_APP_ID: optional(z.string().trim().min(1).optional()),
+  META_APP_SECRET: optional(z.string().trim().min(1).optional()),
+  META_REDIRECT_URI: optional(z.string().url().optional()),
   META_API_VERSION: z.string().trim().default('v21.0'),
   // Embedded-signup configuration id (Meta "config_id"), if you use one.
   META_CONFIG_ID: z.string().trim().min(1).optional(),
+
+  // ---- Twilio Connect (optional) ----------------------------------
+  // Twilio Connect is Twilio's authorization flow: the user approves our
+  // Connect App from their own Twilio account, and we then call the API on
+  // their behalf using THEIR AccountSid as the username and OUR auth token
+  // as the password. So the two secrets below are this server's own Twilio
+  // credentials, not the end user's.
+  //   TWILIO_CONNECT_APP_SID — the Connect App's CNxxxx… sid
+  //   TWILIO_ACCOUNT_SID     — our ACxxxx… (owner of the Connect App)
+  //   TWILIO_AUTH_TOKEN      — our auth token; signs every on-behalf call
+  // Leave unset to run without Connect: /auth/twilio then returns a clear
+  // 503 and the manual POST /platforms/twilio path keeps working.
+  TWILIO_CONNECT_APP_SID: optional(
+    z
+      .string()
+      .trim()
+      .regex(/^CN[0-9a-fA-F]{32}$/, 'TWILIO_CONNECT_APP_SID must start with "CN" and be 34 characters')
+      .optional()
+  ),
+  TWILIO_ACCOUNT_SID: optional(
+    z
+      .string()
+      .trim()
+      .regex(/^AC[0-9a-fA-F]{32}$/, 'TWILIO_ACCOUNT_SID must start with "AC" and be 34 characters')
+      .optional()
+  ),
+  TWILIO_AUTH_TOKEN: optional(z.string().trim().min(10).optional()),
 
   // Max size of an uploaded contacts CSV, in megabytes.
   CSV_MAX_UPLOAD_MB: z.coerce.number().positive().max(50).default(5),
@@ -120,4 +156,9 @@ export const isGoogleOAuthConfigured = Boolean(
 );
 export const isMetaOAuthConfigured = Boolean(
   env.META_APP_ID && env.META_APP_SECRET && env.META_REDIRECT_URI
+);
+// No redirect URI here: Twilio Connect takes the callback from the Connect
+// App's own dashboard configuration, not from the authorize request.
+export const isTwilioConnectConfigured = Boolean(
+  env.TWILIO_CONNECT_APP_SID && env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN
 );

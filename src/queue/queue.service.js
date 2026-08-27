@@ -4,8 +4,43 @@
 // deliveryQueue/retryQueue directly. Keeps job-shape in one place.
 // ============================================================
 
-import { deliveryQueue, retryQueue } from './bull.queue.js';
+import { deliveryQueue, retryQueue, connection } from './bull.queue.js';
 import { RETRY_BACKOFF_MS, MAX_RETRY_ATTEMPTS, JOB_PRIORITY } from '../constants/codes.js';
+import { AppError } from '../utils/AppError.js';
+import { env } from '../config/env.js';
+
+const PING_TIMEOUT_MS = 2_000;
+
+/**
+ * Fail fast when Redis is down, BEFORE anything is written.
+ *
+ * An immediate send creates MessageDelivery rows and then queues one job per
+ * row. If the queue is unreachable we'd be left with rows nobody will ever
+ * pick up on a job already marked dispatched — so the caller checks here
+ * first and nothing is created at all.
+ *
+ * ioredis queues commands while offline rather than rejecting, hence the
+ * race: a hung ping means "not reachable" just as much as a failed one.
+ */
+export async function assertQueueReachable() {
+  if (connection.status === 'ready') return;
+
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('ping timed out')), PING_TIMEOUT_MS).unref?.();
+  });
+
+  try {
+    await Promise.race([connection.ping(), timeout]);
+  } catch {
+    throw new AppError(
+      503,
+      `Can't reach the delivery queue at ${env.REDIS_URL}. Start Redis (e.g. ` +
+        '`docker run -p 6379:6379 redis`) — or schedule the message for later ' +
+        'instead, which only needs the database.',
+      { code: 'QUEUE_UNAVAILABLE' }
+    );
+  }
+}
 
 /**
  * Enqueue a single delivery attempt for one MessageDelivery row.

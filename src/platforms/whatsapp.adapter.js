@@ -20,9 +20,12 @@
 
 import { BaseAdapter } from './base.adapter.js';
 import { AppError } from '../utils/AppError.js';
+import { env } from '../config/env.js';
 
-const API_VERSION = 'v19.0';
-const GRAPH_BASE = `https://graph.facebook.com/${API_VERSION}`;
+// Read from env so connecting (meta.provider.js) and sending agree on one
+// Graph version — they were drifting apart, and a hardcoded version silently
+// ages into Meta's 2-year deprecation window.
+const GRAPH_BASE = `https://graph.facebook.com/${env.META_API_VERSION}`;
 
 /** file_types code -> WhatsApp message type. Unknown types ride as documents. */
 const MEDIA_TYPES = { image: 'image', video: 'video', audio: 'audio' };

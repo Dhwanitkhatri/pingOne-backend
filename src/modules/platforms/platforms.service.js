@@ -17,6 +17,7 @@ import { encryptToken, decryptToken } from '../../utils/crypto.js';
 import { getPlatformId } from '../../utils/platforms.js';
 import { fetchJson } from '../../utils/httpClient.js';
 import { AppError } from '../../utils/AppError.js';
+import { env } from '../../config/env.js';
 
 // Fields safe to return to the client (never the secret / iv).
 const publicSelect = {
@@ -106,7 +107,21 @@ export async function disconnect(userId, platformCode) {
 
 // ---- per-platform entry points ------------------------------------
 
-export function connectWhatsApp(userId, { accessToken, phoneNumberId, businessAccountId, expiresAt }) {
+/**
+ * Connect WhatsApp Cloud. The token/phone-number pair is verified against the
+ * Graph API first, so a typo or an expired token fails here instead of
+ * silently at send time — the same contract Telegram and Twilio already offer.
+ *
+ * Verification is SKIPPED when no phoneNumberId is supplied: the OAuth flow
+ * stores a credential whose target could not be auto-discovered, and that is a
+ * legitimate pending state (completeMeta reports `needsPhoneNumberId`).
+ */
+export async function connectWhatsApp(
+  userId,
+  { accessToken, phoneNumberId, businessAccountId, expiresAt }
+) {
+  const number = phoneNumberId ? await verifyWhatsAppNumber(accessToken, phoneNumberId) : {};
+
   return connect({
     userId,
     platformCode: 'whatsapp',
@@ -114,8 +129,34 @@ export function connectWhatsApp(userId, { accessToken, phoneNumberId, businessAc
     extraInfo: {
       phone_number_id: phoneNumberId,
       ...(businessAccountId ? { business_account_id: businessAccountId } : {}),
+      ...(number.display_phone_number ? { display_phone_number: number.display_phone_number } : {}),
+      ...(number.verified_name ? { verified_name: number.verified_name } : {}),
     },
     expiresAt: expiresAt ?? null,
+  });
+}
+
+/**
+ * Read the phone number back from Graph, which proves three things at once:
+ * the token is valid, it hasn't expired, and it is actually scoped to that
+ * phone-number id. Returns the number's own details so we record Meta's
+ * values rather than whatever the caller typed.
+ */
+async function verifyWhatsAppNumber(accessToken, phoneNumberId) {
+  return fetchJson(`https://graph.facebook.com/${env.META_API_VERSION}/${phoneNumberId}`, {
+    provider: 'Meta',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  }).catch((err) => {
+    // 400/401/403 from Graph is a bad credential — user error, not an outage.
+    const status = err.details?.status;
+    if (status === 400 || status === 401 || status === 403) {
+      throw AppError.badRequest(
+        'Meta rejected that WhatsApp token or phone number id. Check both on the ' +
+          'WhatsApp → API Setup page; temporary tokens expire after 24 hours.',
+        { code: 'INVALID_WHATSAPP_CREDENTIAL', details: err.details?.body?.error?.message }
+      );
+    }
+    throw err;
   });
 }
 
@@ -188,6 +229,36 @@ export async function connectTwilio(userId, { accountSid, authToken, twilioNumbe
       account_sid: accountSid,
       twilio_number: twilioNumber,
       ...(account?.friendly_name ? { account_name: account.friendly_name } : {}),
+    },
+  });
+}
+
+/**
+ * Connect Twilio via Twilio Connect. The account was already verified by the
+ * provider (fetchAuthorizedAccount) during the callback, so there is nothing
+ * left to check here.
+ *
+ * The stored secret is OUR auth token, because that is what signs on-behalf
+ * calls for a Connect-authorized account — see twilio.provider.js. Stored the
+ * same encrypted way as every other secret, and it lands in the exact shape
+ * SmsAdapter already reads, so sending is identical for both paths.
+ *
+ * `twilioNumber` may be absent when the account owns no number yet; the
+ * credential is still stored and the caller reports the pending state.
+ */
+export function connectTwilioConnect(userId, { accountSid, accountName, twilioNumber }) {
+  return connect({
+    userId,
+    platformCode: 'sms',
+    secret: env.TWILIO_AUTH_TOKEN,
+    extraInfo: {
+      account_sid: accountSid,
+      ...(twilioNumber ? { twilio_number: twilioNumber } : {}),
+      ...(accountName ? { account_name: accountName } : {}),
+      // Marks the credential as Connect-granted: the secret is this server's
+      // auth token, so revoking access means revoking the Connect App grant
+      // in the user's Twilio console, not rotating a token they hold.
+      connect: true,
     },
   });
 }
