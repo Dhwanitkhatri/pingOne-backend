@@ -293,6 +293,45 @@ Note the key is `credential` (singular, no `data` wrapper) — inconsistent with
 
 Errors: `400 INVALID_BOT_TOKEN` (Telegram rejected it), `400 INVALID_TWILIO_CREDENTIALS`, `400 VALIDATION_ERROR`, `502` if the provider is unreachable.
 
+### Telegram: bot vs. user account
+
+Telegram can be connected two ways, and `extraInfo.mode` on the credential says which:
+
+| `mode` | API | Addressing | Notes |
+|---|---|---|---|
+| `bot` (default) | Bot API | numeric `chat_id` only | Contact must open the invite link and press Start first. ToS-safe for messaging at scale. |
+| `user` | MTProto (Client API) | `@username`, phone, or id | No invite step. **Telegram's ToS prohibit bulk unsolicited messaging from personal accounts** — expect `TELEGRAM_PEER_FLOOD` then a ban. |
+
+Credentials connected before user mode existed carry no `mode` key; treat a missing value as `bot`.
+
+In `user` mode `platformHandles[].linked` is irrelevant — usernames resolve directly, so there is nothing to link.
+
+### `POST /platforms/telegram/user/start` — `200`
+```jsonc
+{ "phoneNumber": "+919876543210" }        // E.164
+→ { "message": "Telegram sent a login code", "loginId": "…uuid…", "viaApp": true }
+```
+`viaApp` is true when Telegram delivered the code inside the Telegram app rather than by SMS. The `loginId` is an opaque handle to a **server-side, in-memory** pending login — it expires in 10 minutes and does not survive a server restart or a second instance.
+
+Errors: `503 TELEGRAM_USER_NOT_CONFIGURED` (no `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`), `400 TELEGRAM_PHONE_NUMBER_INVALID`, `400 TELEGRAM_FLOOD_WAIT` (`details.retryAfterSeconds`).
+
+### `POST /platforms/telegram/user/verify` — `200`
+```jsonc
+{ "loginId": "…uuid…", "code": "12345", "password": "…" }   // password optional
+→ { "message": "Telegram account connected", "credential": { /* Credential */ } }
+```
+**`400 TELEGRAM_PASSWORD_REQUIRED` is not a failure.** It means the account has two-step verification: prompt for the password and call again with the *same* `loginId` — no new code is needed.
+
+Other errors: `400 TELEGRAM_PHONE_CODE_INVALID` (retryable, same `loginId`), `400 TELEGRAM_PHONE_CODE_EXPIRED`, `400 TELEGRAM_PASSWORD_HASH_INVALID`, `400 TELEGRAM_LOGIN_EXPIRED` (start over).
+
+The stored secret is a session string granting full access to that Telegram account. Like every secret it is encrypted at rest and **never** returned — `extraInfo` carries only identity (`user_id`, `username`, `first_name`, `phone`).
+
+### `POST /platforms/telegram/user/cancel` — `200`
+```jsonc
+{ "loginId": "…uuid…" }  → { "message": "Login cancelled", "cancelled": true }
+```
+Best-effort cleanup when the user closes the dialog; pending logins expire on their own regardless.
+
 ### `DELETE /platforms/:code` — `200`
 ```jsonc
 { "message": "telegram disconnected", "platform": "telegram", "disconnected": true }
@@ -335,12 +374,14 @@ All 🔒.
   "preferredPlatform": "telegram",           // flattened to a CODE STRING, or null
   "phones":  [ { "id": 7,  "phone": "+14155550100", "isPrimary": true } ],
   "emails":  [ { "id": 11, "email": "aarav@example.com", "isPrimary": true } ],
-  "platformHandles": [ { "id": 3, "platform": "telegram", "handle": "@aarav" } ],
+  "platformHandles": [ { "id": 3, "platform": "telegram", "handle": "@aarav",
+                         "linked": true, "linkedAt": "2026-08-29T10:00:00.000Z" } ],
   "groups":  [ { "id": 2, "name": "Clients" } ]
 }
 ```
 - `phones` / `emails` are ordered primary-first, then by id. Exactly one entry is `isPrimary: true` when the list is non-empty.
 - `platformHandles[].platform` is the code string (already flattened from the join).
+- `platformHandles[].linked` — **Telegram only, and it matters.** `handle` is what the user typed (`"@aarav"`), but Telegram's Bot API addresses a private user only by a numeric chat id, and refuses to message anyone who hasn't messaged the bot first. `linked: false` means that id hasn't been captured yet, so a send to this contact on Telegram fails with `400 TELEGRAM_NOT_LINKED`. Get the contact linked with `GET /contacts/:id/telegram-link` below. The chat id itself is never returned. For every other platform `linked` is always `false` and can be ignored.
 - `groups` is flattened from the membership join — just `{ id, name }`.
 - Soft-deleted contacts never appear.
 
@@ -371,6 +412,23 @@ Errors: `404 CONTACT_NOT_FOUND`.
 { "message": "Contact deleted", "id": 42, "deleted": true }
 ```
 Soft delete — group memberships are dropped, delivery history is retained.
+
+### `GET /contacts/:id/telegram-link` — `200`
+The invite a contact must open once before Telegram will accept messages for them.
+```jsonc
+{
+  "data": {
+    "url": "https://t.me/pingone_bot?start=c73_9f2ab41c0d",
+    "botUsername": "@pingone_bot",
+    "linked": false,                  // true once they've pressed Start
+    "linkedAt": null,
+    "handle": "@aarav"                // null if no Telegram handle on file
+  }
+}
+```
+The `start` payload is HMAC-signed server-side — do **not** try to build this URL in the client, an unsigned payload is rejected by the webhook. Show the link, let the contact open it and press **Start**; the capture happens through `POST /webhooks/telegram` with no further client involvement. Poll or refetch the contact to see `linked` flip.
+
+Errors: `404 CONTACT_NOT_FOUND`, `400 PLATFORM_NOT_CONNECTED` (no Telegram bot connected on this account).
 
 ### `GET /contacts/import/google` — `200`
 ```jsonc

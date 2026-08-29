@@ -14,7 +14,20 @@ export async function resolveRecipientHandle(contactId, platformId, platformCode
   const explicit = await prisma.contactPlatformHandle.findUnique({
     where: { contactId_platformId: { contactId, platformId } },
   });
-  if (explicit) return explicit.handle;
+
+  if (explicit) {
+    /**
+     * `chatId` is the platform's own address, captured when the contact first
+     * messaged us; `handle` is what the user typed. Prefer the captured one —
+     * it always works — but fall back to the handle rather than failing here.
+     *
+     * Whether a bare "@aarav" is usable depends on the sender's TELEGRAM MODE,
+     * which this function can't see: the Bot API rejects it, a connected user
+     * account resolves it. The adapter holds the credential and therefore the
+     * mode, so it makes that call — see telegram.adapter.js.
+     */
+    return explicit.chatId ?? explicit.handle;
+  }
 
   if (platformCode === PLATFORM.GMAIL) {
     const email = await prisma.contactEmail.findFirst({

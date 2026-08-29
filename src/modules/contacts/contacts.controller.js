@@ -33,6 +33,18 @@ export const remove = asyncHandler(async (req, res) => {
   res.status(200).json({ message: 'Contact deleted', ...result });
 });
 
+/**
+ * GET /contacts/:id/telegram-link — the invite the contact must open once.
+ *
+ * Telegram won't let a bot message anyone who hasn't messaged it first, and
+ * gives no way to look up a chat id from an @username, so this link is the
+ * only route to a working Telegram send. See utils/telegramLink.js.
+ */
+export const telegramLink = asyncHandler(async (req, res) => {
+  const invite = await contactsService.getTelegramInvite(req.user.id, req.params.id);
+  res.status(200).json({ data: invite });
+});
+
 /** GET /contacts/import/google — pulls from the connected Gmail account. */
 export const importFromGoogle = asyncHandler(async (req, res) => {
   const { rows, account, fetched } = await fetchGoogleContacts(req.user.id);

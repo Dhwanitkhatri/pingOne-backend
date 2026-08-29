@@ -18,6 +18,8 @@ import { getPlatformId } from '../../utils/platforms.js';
 import { fetchJson } from '../../utils/httpClient.js';
 import { AppError } from '../../utils/AppError.js';
 import { env } from '../../config/env.js';
+import * as telegramUser from './providers/telegram-user.provider.js';
+import { TELEGRAM_MODES } from '../../platforms/telegram.adapter.js';
 
 // Fields safe to return to the client (never the secret / iv).
 const publicSelect = {
@@ -185,11 +187,64 @@ export async function connectTelegram(userId, { botToken }) {
     platformCode: 'telegram',
     secret: botToken,
     extraInfo: {
+      // Explicit, even though it's the default the dispatcher assumes — a
+      // credential that says which mode it is beats one you have to infer.
+      mode: TELEGRAM_MODES.BOT,
       ...(bot.username ? { bot_username: `@${bot.username}` } : {}),
       ...(bot.id ? { bot_id: bot.id } : {}),
       ...(bot.first_name ? { bot_name: bot.first_name } : {}),
     },
   });
+}
+
+/* ── Telegram as a real user account (MTProto) ────────────────────────── */
+
+/**
+ * Step 1 of the user-account login: ask Telegram to send a code.
+ *
+ * Nothing is stored yet — the half-finished login lives in the provider's
+ * in-memory map until the code comes back. `loginId` is the opaque handle to
+ * it, not a credential.
+ */
+export function startTelegramUserLogin(_userId, { phoneNumber }) {
+  return telegramUser.startLogin(phoneNumber);
+}
+
+/**
+ * Step 2: submit the code (plus the 2FA password when the account has one)
+ * and persist the resulting session.
+ *
+ * ⚠️ The stored secret is a StringSession — FULL access to that Telegram
+ * account, not a scoped token. It is encrypted at rest by `connect()` like
+ * every other secret and is never returned by any endpoint, but the blast
+ * radius of a leak is the user's entire Telegram identity. See the ToS
+ * warning in providers/telegram-user.provider.js before enabling this for
+ * broadcast traffic.
+ */
+export async function connectTelegramUser(userId, { loginId, code, password }) {
+  const { session, user } = await telegramUser.completeLogin({ loginId, code, password });
+
+  return connect({
+    userId,
+    platformCode: 'telegram',
+    secret: session,
+    extraInfo: {
+      mode: TELEGRAM_MODES.USER,
+      // Identity only — enough for the UI to show whose account is connected.
+      // No part of the session is copied here; extraInfo is returned to the
+      // client in the clear.
+      user_id: user.id,
+      ...(user.username ? { username: user.username } : {}),
+      ...(user.firstName ? { first_name: user.firstName } : {}),
+      ...(user.phone ? { phone: user.phone } : {}),
+    },
+  });
+}
+
+/** Abandon a half-finished login (the user closed the dialog). */
+export function cancelTelegramUserLogin(_userId, { loginId }) {
+  telegramUser.cancelLogin(loginId);
+  return { cancelled: true };
 }
 
 export function connectGoogle(userId, { gmailAddress, refreshToken, expiresAt }) {

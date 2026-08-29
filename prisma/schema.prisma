@@ -233,17 +233,29 @@ model ContactEmail {
 }
 
 model ContactPlatformHandle {
-  id         Int      @id @default(autoincrement())
-  contactId  Int      @map("contact_id")
-  platformId Int      @map("platform_id") @db.SmallInt
-  handle     String   @db.VarChar(255)
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  platform   Platform @relation(fields: [platformId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id         Int       @id @default(autoincrement())
+  contactId  Int       @map("contact_id")
+  platformId Int       @map("platform_id") @db.SmallInt
+  /// What the USER typed and what the UI shows — "@aarav", a phone number.
+  handle     String    @db.VarChar(255)
+  /// The platform's own opaque address, when it differs from `handle`.
+  ///
+  /// Telegram is the reason this exists: the Bot API addresses a private
+  /// user only by numeric chat_id, and there is no way to look one up from
+  /// an @username. The id is captured when the contact first messages the
+  /// bot (see webhooks.service.js) and stored here, so `handle` can stay the
+  /// readable @username the user recognises. Null until that happens.
+  chatId     String?   @map("chat_id") @db.VarChar(64)
+  /// When the chat id was captured — null while the contact is unlinked.
+  linkedAt   DateTime? @map("linked_at") @db.Timestamp(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  contact    Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  platform   Platform  @relation(fields: [platformId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([contactId, platformId])
   @@index([contactId], map: "idx_cph_contact_id")
   @@index([platformId], map: "idx_cph_platform_id")
+  @@index([platformId, chatId], map: "idx_cph_platform_chat_id")
   @@map("contact_platform_handles")
 }
 

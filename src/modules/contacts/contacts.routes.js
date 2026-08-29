@@ -6,6 +6,7 @@
 //   GET    /contacts/import/google  pull from the connected Gmail account
 //   POST   /contacts/import/csv     upload a CSV (multipart field "file")
 //   GET    /contacts/:id            one contact
+//   GET    /contacts/:id/telegram-link   invite link for the Telegram bot
 //   PUT    /contacts/:id            update  (PATCH is accepted too)
 //   DELETE /contacts/:id            soft delete
 //
@@ -46,6 +47,15 @@ router.post('/', validate({ body: createContactSchema }), controller.create);
 
 // ---- item ----
 router.get('/:id', validate({ params: idParamSchema }), controller.getOne);
+
+// The Telegram invite link for this contact. Declared after /:id but its path
+// is longer, so Express matches it unambiguously.
+router.get(
+  '/:id/telegram-link',
+  validate({ params: idParamSchema }),
+  controller.telegramLink
+);
+
 router.put(
   '/:id',
   validate({ params: idParamSchema, body: updateContactSchema }),

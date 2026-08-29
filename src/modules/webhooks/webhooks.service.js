@@ -20,6 +20,7 @@ import { prisma } from '../../config/prisma.js';
 import { transitionStatus } from '../deliveries/delivery-status.service.js';
 import { lookupByCode } from '../../utils/lookupCache.js';
 import { MESSAGE_STATUS, CHANGED_BY, PLATFORM } from '../../constants/codes.js';
+import { extractStartPayload, parseStartPayload } from '../../utils/telegramLink.js';
 
 /** Meta's status strings -> our message_statuses codes. */
 const META_STATUS_MAP = {
@@ -149,7 +150,20 @@ export async function handleTelegramEvent(update) {
   const message = update?.message ?? update?.edited_message;
 
   if (message?.chat?.id) {
-    return handleTelegramEngagement(String(message.chat.id), message.date);
+    const chatId = String(message.chat.id);
+
+    // This is the ONLY moment Telegram ever reveals a private chat's id, so
+    // the binding is attempted before anything else — including for a bare
+    // "/start", which carries no engagement meaning of its own.
+    const linked = await linkTelegramChat(chatId, message);
+
+    const engagement = await handleTelegramEngagement(chatId, message.date);
+
+    // A link is real work even when there was no delivery to mark as read.
+    if (linked) {
+      return { ...engagement, processed: engagement.processed + 1, unmatched: 0 };
+    }
+    return engagement;
   }
 
   const membership = update?.my_chat_member;
@@ -167,20 +181,105 @@ export async function handleTelegramEvent(update) {
   return { processed: 0, ignored: 1, unmatched: 0 };
 }
 
+/**
+ * Bind an incoming chat id to the contact it belongs to.
+ *
+ * Telegram gives no way to resolve an @username to a chat_id, so this is the
+ * only opportunity to learn one — see `utils/telegramLink.js`. Two routes in,
+ * with deliberately different trust levels:
+ *
+ *   1. `/start c73_9f2ab41c0d` — a signed deep link the account owner sent to
+ *      this contact. The HMAC proves the binding was intended, so it may
+ *      REPLACE an existing id (the contact moved to a new Telegram account).
+ *
+ *   2. `from.username` matching a handle the owner typed — convenient, but
+ *      only as trustworthy as a username being unique, so it may only FILL an
+ *      empty id, never overwrite one. Otherwise anyone who set their username
+ *      to match could redirect somebody else's messages to themselves.
+ *
+ * @returns {Promise<boolean>} whether a row was actually linked
+ */
+async function linkTelegramChat(chatId, message) {
+  const telegram = await lookupByCode('platform', PLATFORM.TELEGRAM);
+
+  // Already known — the overwhelmingly common case, one indexed lookup.
+  const existing = await prisma.contactPlatformHandle.findFirst({
+    where: { platformId: telegram.id, chatId },
+    select: { id: true },
+  });
+  if (existing) return false;
+
+  // ---- 1. signed deep link ----
+  const payload = extractStartPayload(message?.text);
+  const contactId = payload ? parseStartPayload(payload) : null;
+
+  if (contactId) {
+    // upsert: the contact may have no Telegram handle row yet if the owner
+    // sent the invite before typing a username.
+    const linkedRow = await prisma.contactPlatformHandle.upsert({
+      where: { contactId_platformId: { contactId, platformId: telegram.id } },
+      update: { chatId, linkedAt: new Date() },
+      create: {
+        contactId,
+        platformId: telegram.id,
+        // Fall back to the @username as the display handle; the owner can
+        // rename it afterwards.
+        handle: message?.from?.username ? `@${message.from.username}` : chatId,
+        chatId,
+        linkedAt: new Date(),
+      },
+      select: { contactId: true },
+    // A forged-looking payload naming a contact that no longer exists is not
+    // an error worth retrying — the FK just fails.
+    }).catch((err) => {
+      console.warn(`[webhook:telegram] could not link contact ${contactId}: ${err.message}`);
+      return null;
+    });
+
+    if (linkedRow) {
+      console.log(`[webhook:telegram] linked chat ${chatId} to contact ${contactId} via invite`);
+      return true;
+    }
+  }
+
+  // ---- 2. username fallback ----
+  const username = message?.from?.username;
+  if (!username) return false;
+
+  const { count } = await prisma.contactPlatformHandle.updateMany({
+    where: {
+      platformId: telegram.id,
+      // Fill only. Never take an id away from a contact already linked.
+      chatId: null,
+      handle: { in: [`@${username}`, username], mode: 'insensitive' },
+    },
+    data: { chatId, linkedAt: new Date() },
+  });
+
+  if (count > 0) {
+    console.log(
+      `[webhook:telegram] linked chat ${chatId} to ${count} contact(s) via @${username}`
+    );
+  }
+  return count > 0;
+}
+
 async function handleTelegramEngagement(chatId, timestamp) {
   const telegram = await lookupByCode('platform', PLATFORM.TELEGRAM);
 
-  // chat_id -> contact. Telegram handles are stored on ContactPlatformHandle
-  // (see the cold-outreach note in telegram.adapter.js). More than one contact
-  // can legitimately carry the same handle across different users' address
-  // books, so this is a findMany.
+  // chat_id -> contact. Matched on `chatId`, not `handle`: `handle` is the
+  // readable @username the owner typed, which Telegram never sends back.
+  // More than one contact can legitimately carry the same chat across
+  // different users' address books, so this is a findMany.
   const handles = await prisma.contactPlatformHandle.findMany({
-    where: { platformId: telegram.id, handle: chatId },
+    where: { platformId: telegram.id, chatId },
     select: { contactId: true },
   });
 
   if (handles.length === 0) {
-    console.warn(`[webhook:telegram] no contact has telegram handle ${chatId}`);
+    // Someone messaged the bot who isn't in anyone's address book, or whose
+    // invite payload didn't resolve. Nothing to attribute the message to.
+    console.warn(`[webhook:telegram] no contact is linked to chat ${chatId}`);
     return { processed: 0, ignored: 0, unmatched: 1 };
   }
 

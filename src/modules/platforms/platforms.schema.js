@@ -29,6 +29,40 @@ export const telegramSchema = z.object({
     .regex(/^\d+:[A-Za-z0-9_-]+$/, 'botToken must look like 123456789:AA... (from @BotFather)'),
 });
 
+/**
+ * Telegram as a real user account (MTProto), step 1: request a login code.
+ *
+ * Telegram decides where the code goes — the Telegram app if the account is
+ * signed in somewhere, SMS otherwise.
+ */
+export const telegramUserStartSchema = z.object({
+  phoneNumber: z
+    .string()
+    .trim()
+    .regex(/^\+[1-9]\d{6,14}$/, 'phoneNumber must be E.164 format, e.g. +919876543210'),
+});
+
+/**
+ * Step 2: the code, plus the two-step verification password when the account
+ * has one. `password` is optional because the client can't know whether it's
+ * needed until Telegram answers SESSION_PASSWORD_NEEDED on the first attempt.
+ */
+export const telegramUserVerifySchema = z.object({
+  loginId: z.string().uuid('loginId must come from the start step'),
+  // Telegram login codes are 5 digits today, but the length has changed
+  // before — accept a short numeric string rather than pinning it.
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{4,8}$/, 'Enter the numeric code Telegram sent you'),
+  password: z.string().min(1).max(256).optional(),
+});
+
+/** Cancelling a half-finished login. */
+export const telegramUserCancelSchema = z.object({
+  loginId: z.string().uuid(),
+});
+
 // Google / Gmail (OAuth2): the long-lived refresh token is the secret we
 // persist; the short-lived access token is re-derived when sending and is
 // intentionally NOT stored in plaintext extra_info.

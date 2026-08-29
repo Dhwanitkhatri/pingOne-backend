@@ -132,6 +132,17 @@ const envSchema = z.object({
   // Shared secret passed to Telegram's setWebhook as `secret_token`; Telegram
   // returns it in the X-Telegram-Bot-Api-Secret-Token header on every update.
   TELEGRAM_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
+
+  // ---- Telegram user accounts (MTProto) ---------------------------
+  // Register an application at https://my.telegram.org -> API development
+  // tools. These identify the APPLICATION, not any account, and are the same
+  // for every user who connects — each user's own credential is the session
+  // string produced by their login, which is encrypted per-user like any
+  // other secret.
+  //
+  // Only needed for the "user account" Telegram mode; bot mode ignores them.
+  TELEGRAM_API_ID: z.coerce.number().int().positive().optional(),
+  TELEGRAM_API_HASH: z.string().trim().min(1).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -156,6 +167,11 @@ export const isGoogleOAuthConfigured = Boolean(
 );
 export const isMetaOAuthConfigured = Boolean(
   env.META_APP_ID && env.META_APP_SECRET && env.META_REDIRECT_URI
+);
+// Telegram "user account" mode. Bot mode needs none of this, so the app runs
+// fine without it — only the MTProto login endpoints 503.
+export const isTelegramUserConfigured = Boolean(
+  env.TELEGRAM_API_ID && env.TELEGRAM_API_HASH
 );
 // No redirect URI here: Twilio Connect takes the callback from the Connect
 // App's own dashboard configuration, not from the authorize request.

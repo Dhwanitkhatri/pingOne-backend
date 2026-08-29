@@ -14,6 +14,8 @@ import { prisma } from '../../config/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { getPlatformId, getPlatformMap } from '../../utils/platforms.js';
 import { normalizePhone, toSkipTake, paginationMeta } from '../../utils/validators.js';
+import { buildInviteUrl } from '../../utils/telegramLink.js';
+import { PLATFORM } from '../../constants/codes.js';
 
 const contactSelect = {
   id: true,
@@ -31,7 +33,13 @@ const contactSelect = {
     orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }],
   },
   platformHandles: {
-    select: { id: true, handle: true, platform: { select: { code: true, name: true } } },
+    select: {
+      id: true,
+      handle: true,
+      chatId: true,
+      linkedAt: true,
+      platform: { select: { code: true, name: true } },
+    },
   },
   groupMemberships: { select: { group: { select: { id: true, name: true } } } },
 };
@@ -46,6 +54,13 @@ function shapeContact(contact) {
       id: h.id,
       platform: h.platform.code,
       handle: h.handle,
+      // Whether the platform's own address has been captured yet. The raw
+      // chat id is NOT exposed — the client has no use for it and it's the
+      // one part of this a UI could leak into a screenshot. `linked` is all
+      // the Contacts page needs to show "not linked yet" and offer the
+      // invite. See utils/telegramLink.js for why this exists at all.
+      linked: Boolean(h.chatId),
+      linkedAt: h.linkedAt ?? null,
     })),
     groups: groupMemberships.map((m) => m.group),
   };
@@ -164,6 +179,63 @@ export async function getContact(userId, contactId) {
   return shapeContact(contact);
 }
 
+/**
+ * The Telegram invite link for one contact.
+ *
+ * Telegram's Bot API cannot resolve an @username to the numeric chat_id a
+ * send needs, and won't let a bot message anyone who hasn't messaged it
+ * first. So the contact has to open this link and press Start once; the
+ * webhook then captures their chat id (see `utils/telegramLink.js`).
+ *
+ * The URL is built server-side because the payload is HMAC-signed — the
+ * frontend has no access to the signing secret, which is the point.
+ *
+ * @returns {Promise<{ url: string, botUsername: string, linked: boolean,
+ *                     linkedAt: Date|null, handle: string|null }>}
+ * @throws {AppError} 404 CONTACT_NOT_FOUND · 400 PLATFORM_NOT_CONNECTED
+ */
+export async function getTelegramInvite(userId, contactId) {
+  // Ownership check first — never leak whether another user's id exists.
+  const contact = await prisma.contact.findFirst({
+    where: { id: contactId, userId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!contact) {
+    throw AppError.notFound('Contact not found', { code: 'CONTACT_NOT_FOUND' });
+  }
+
+  const telegramId = await getPlatformId(PLATFORM.TELEGRAM);
+
+  // Read `extraInfo` straight off the credential row: the bot username lives
+  // there and this needs nothing else, so the encrypted token is never
+  // decrypted (unlike getDecryptedCredential).
+  const credential = await prisma.userPlatformCredential.findUnique({
+    where: { userId_platformId: { userId, platformId: telegramId } },
+    select: { extraInfo: true, isActive: true },
+  });
+
+  const botUsername = credential?.isActive ? credential.extraInfo?.bot_username : null;
+  if (!botUsername) {
+    throw AppError.badRequest(
+      'Connect a Telegram bot before inviting contacts to it.',
+      { code: 'PLATFORM_NOT_CONNECTED', details: { platform: PLATFORM.TELEGRAM } }
+    );
+  }
+
+  const handle = await prisma.contactPlatformHandle.findUnique({
+    where: { contactId_platformId: { contactId, platformId: telegramId } },
+    select: { handle: true, chatId: true, linkedAt: true },
+  });
+
+  return {
+    url: buildInviteUrl(botUsername, contactId),
+    botUsername,
+    linked: Boolean(handle?.chatId),
+    linkedAt: handle?.linkedAt ?? null,
+    handle: handle?.handle ?? null,
+  };
+}
+
 // ---- writes ---------------------------------------------------------
 
 /** Create a contact and its children in one nested write. */
@@ -226,10 +298,38 @@ export async function updateContact(userId, contactId, input) {
       }
     }
     if (handles !== undefined) {
+      /**
+       * Handles are replaced wholesale, but a captured `chatId` must SURVIVE
+       * that — it was learned from the platform, not typed by the user, and
+       * it can't be re-derived (Telegram only reveals a chat id when the
+       * contact messages the bot). Without this carry-forward, merely
+       * renaming a contact would silently unlink their Telegram and break
+       * every subsequent send.
+       *
+       * Dropping a platform from the list still clears its id, which is the
+       * correct reading of "remove this handle".
+       */
+      const captured = new Map(
+        (
+          await tx.contactPlatformHandle.findMany({
+            where: { contactId, chatId: { not: null } },
+            select: { platformId: true, chatId: true, linkedAt: true },
+          })
+        ).map((row) => [row.platformId, row])
+      );
+
       await tx.contactPlatformHandle.deleteMany({ where: { contactId } });
       if (handles.length) {
         await tx.contactPlatformHandle.createMany({
-          data: handles.map((h) => ({ ...h, contactId })),
+          data: handles.map((h) => {
+            const previous = captured.get(h.platformId);
+            return {
+              ...h,
+              contactId,
+              chatId: previous?.chatId ?? null,
+              linkedAt: previous?.linkedAt ?? null,
+            };
+          }),
         });
       }
     }
