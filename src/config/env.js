@@ -141,8 +141,11 @@ const envSchema = z.object({
   // other secret.
   //
   // Only needed for the "user account" Telegram mode; bot mode ignores them.
-  TELEGRAM_API_ID: z.coerce.number().int().positive().optional(),
-  TELEGRAM_API_HASH: z.string().trim().min(1).optional(),
+  // Wrapped in `optional()` so a blank line (`TELEGRAM_API_ID=`) reads as
+  // "not set" rather than coercing to 0 and failing the positive() check —
+  // which would stop the app booting over a placeholder.
+  TELEGRAM_API_ID: optional(z.coerce.number().int().positive().optional()),
+  TELEGRAM_API_HASH: optional(z.string().trim().min(1).optional()),
 });
 
 const parsed = envSchema.safeParse(process.env);
