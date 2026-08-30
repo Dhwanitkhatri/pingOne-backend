@@ -481,8 +481,22 @@ All 🔒.
 ### `GET /groups` — `200`
 Query: `page`, `limit`, `sort`, `sortBy` (`createdAt|name|updatedAt`), `search`.
 ```jsonc
-{ "data": [ /* Group[] */ ], "pagination": { /* §0.2 */ } }
+{
+  "data": [
+    {
+      "id": 2, "name": "Clients", "description": null,
+      "createdAt": "…", "updatedAt": "…", "memberCount": 37,
+      "members": [                                  // PREVIEW — at most 4
+        { "id": 42, "firstName": "Aarav", "lastName": "Shah",
+          "preferredPlatform": "telegram" }
+      ]
+    }
+  ],
+  "pagination": { /* §0.2 */ }
+}
 ```
+- `members` here is an **avatar preview**, capped at 4 and ordered by `addedAt` asc — it is not the membership list. `memberCount` is always the real total, so render counts from that, never from `members.length`.
+- Preview rows carry no phones/emails/handles. Use `GET /groups/:id` when you need to address the members.
 
 ### `GET /groups/:id` — `200` — includes members
 ```jsonc
@@ -497,13 +511,16 @@ Query: `page`, `limit`, `sort`, `sortBy` (`createdAt|name|updatedAt`), `search`.
         "lastName": "Shah",
         "phones": [ { "phone": "+14155550100", "isPrimary": true } ],   // ⚠️ no `id` here
         "emails": [ { "email": "aarav@example.com", "isPrimary": true } ],
+        "preferredPlatform": "telegram",                                // code string | null
+        "platformHandles": [ { "platform": "telegram", "handle": "@aarav",
+                               "linked": true, "linkedAt": "…" } ],     // ⚠️ no `id` here
         "addedAt": "2026-06-02T10:00:00.000Z"
       }
     ]
   }
 }
 ```
-The member shape is **leaner than `Contact`** — no `preferredPlatform`, no `platformHandles`, no `groups`, and phone/email rows carry no `id`. Ordered by `addedAt` asc. Soft-deleted contacts are excluded.
+The member shape is **leaner than `Contact`** — no `groups`, and phone/email/handle rows carry no `id`. Everything needed to *address* a member is present (`preferredPlatform`, `platformHandles`, phones, emails), so a group can seed the composer exactly like a contact selection does. Ordered by `addedAt` asc. Soft-deleted contacts are excluded.
 
 Errors: `404 GROUP_NOT_FOUND`.
 

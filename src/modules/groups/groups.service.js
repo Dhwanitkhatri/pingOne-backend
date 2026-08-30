@@ -38,12 +38,71 @@ const memberSelect = {
         select: { email: true, isPrimary: true },
         orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }],
       },
+      // Carried so a "message this group" flow can address each member the
+      // same way the contacts list does — without these the client can only
+      // guess a channel from the email/phone it happens to have.
+      preferredPlatform: { select: { code: true } },
+      platformHandles: {
+        select: {
+          handle: true,
+          chatId: true,
+          linkedAt: true,
+          platform: { select: { code: true } },
+        },
+      },
     },
   },
 };
 
-function shapeGroup({ _count, ...group }) {
-  return { ...group, memberCount: _count.members };
+/**
+ * The handful of members shown as avatars on a group row. Kept deliberately
+ * thin — the list endpoint returns many groups, and the card only needs
+ * initials plus the channel each person prefers.
+ */
+const MEMBER_PREVIEW_COUNT = 4;
+
+const memberPreviewSelect = {
+  contact: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      preferredPlatform: { select: { code: true } },
+    },
+  },
+};
+
+/**
+ * Flatten a membership row into the contact-shaped object the client uses.
+ * Mirrors `shapeContact` in the contacts service: platform relations become
+ * code strings, and a Telegram chat id is reported only as `linked`.
+ */
+function shapeMember({ addedAt, contact }) {
+  const { preferredPlatform, platformHandles, ...rest } = contact;
+
+  return {
+    ...rest,
+    preferredPlatform: preferredPlatform?.code ?? null,
+    ...(platformHandles
+      ? {
+          platformHandles: platformHandles.map((h) => ({
+            platform: h.platform.code,
+            handle: h.handle,
+            linked: Boolean(h.chatId),
+            linkedAt: h.linkedAt ?? null,
+          })),
+        }
+      : {}),
+    ...(addedAt ? { addedAt } : {}),
+  };
+}
+
+function shapeGroup({ _count, members, ...group }) {
+  return {
+    ...group,
+    memberCount: _count.members,
+    ...(members ? { members: members.map(shapeMember) } : {}),
+  };
 }
 
 /** 404 unless the group exists, is live, and belongs to this user. */
@@ -118,7 +177,16 @@ export async function listGroups(userId, query) {
     prisma.contactGroup.count({ where }),
     prisma.contactGroup.findMany({
       where,
-      select: groupSelect,
+      select: {
+        ...groupSelect,
+        // Avatar preview only — `memberCount` remains the real total.
+        members: {
+          where: { contact: { deletedAt: null } },
+          select: memberPreviewSelect,
+          orderBy: { addedAt: 'asc' },
+          take: MEMBER_PREVIEW_COUNT,
+        },
+      },
       orderBy: { [sortBy]: sort },
       ...toSkipTake(query),
     }),
@@ -146,11 +214,7 @@ export async function getGroup(userId, groupId) {
     throw AppError.notFound('Group not found', { code: 'GROUP_NOT_FOUND' });
   }
 
-  const { members, ...rest } = group;
-  return {
-    ...shapeGroup(rest),
-    members: members.map((m) => ({ ...m.contact, addedAt: m.addedAt })),
-  };
+  return shapeGroup(group);
 }
 
 // ---- writes ---------------------------------------------------------
