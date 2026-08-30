@@ -25,6 +25,7 @@ import { workerManager } from './utils/worker-manager.js';
 import { authenticate } from './middleware/authenticate.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { env } from './config/env.js';
+import { verifyMailer } from './utils/mailer.js';
 import workerHealthRoutes from './modules/worker-health/worker-health.routes.js';
 
 const WORKER_HEALTH_PORT = process.env.WORKER_HEALTH_PORT || 4001;
@@ -37,6 +38,10 @@ let isShuttingDown = false;
  * Start all worker processes and health check server.
  */
 async function startWorkers() {
+  // This process sends the permanent-failure alerts, so it needs a working
+  // transport too — surface a bad SMTP config here rather than at 3am.
+  void verifyMailer();
+
   // Start the actual workers
   startSchedulerWorker();
   startDeliveryWorker();

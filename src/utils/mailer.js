@@ -1,32 +1,114 @@
 // ============================================================
-// Mailer — pluggable email sender.
+// Mailer — transactional email the SERVER sends as itself.
 //
-// In development it just prints the message (and any action link) to the
-// console, so flows like password reset are fully demoable without an
-// email provider. To go to production, implement `deliver()` with a real
-// transport (nodemailer + SMTP, SendGrid, SES, Resend, …) — nothing else
-// in the app needs to change.
+// Two messages go through here: the password-reset link, and the alert for a
+// delivery that exhausted every retry. Neither has anything to do with the
+// Gmail platform adapter — that sends as a CONNECTED USER over OAuth, on
+// behalf of someone who authorised it. This sends as PingOne.
+//
+// Transport is SMTP via nodemailer, configured with SMTP_HOST/USER/PASS. Any
+// provider works: a Gmail app password, Brevo, Mailtrap, SES, Postmark.
+//
+// With no SMTP configured, mail is PRINTED to the console rather than sent.
+// That keeps the reset flow demoable without an email account — but it is
+// exactly why a reset link can look like it "wasn't sent" when the backend
+// did everything right, so the console output says so in as many words, and
+// production warns on every send instead of failing quietly.
 // ============================================================
 
-import { isProd } from '../config/env.js';
+import nodemailer from 'nodemailer';
+import { env, isProd, isSmtpConfigured } from '../config/env.js';
 
 /**
- * Low-level delivery. Replace the body of this function with a real
- * transport for production.
+ * Built once and reused — nodemailer pools connections, and rebuilding the
+ * transport per message would open a new TCP+TLS handshake every time.
+ * Null until the first send so an app with no SMTP never touches nodemailer.
+ */
+let transport = null;
+
+function getTransport() {
+  if (transport) return transport;
+
+  transport = nodemailer.createTransport({
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    // Implicit TLS on 465; 587 negotiates STARTTLS after connecting, and
+    // setting `secure` there makes the connection hang rather than fail.
+    secure: env.SMTP_SECURE === undefined ? env.SMTP_PORT === 465 : env.SMTP_SECURE === 'true',
+    auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+  });
+
+  return transport;
+}
+
+/**
+ * Verify the SMTP credentials by opening a connection and authenticating.
+ * Called at boot so a typo'd password surfaces in the startup log rather than
+ * the first time a user asks for a reset link.
+ *
+ * Never throws — bad mail config must not stop the API from serving requests.
+ * @returns {Promise<boolean>}
+ */
+export async function verifyMailer() {
+  if (!isSmtpConfigured) {
+    console.warn(
+      '[mailer] SMTP is not configured — password-reset emails will be PRINTED TO THIS CONSOLE, not delivered.\n' +
+        '         Set SMTP_HOST, SMTP_USER and SMTP_PASS in .env to send real mail.'
+    );
+    return false;
+  }
+
+  try {
+    await getTransport().verify();
+    console.log(`[mailer] SMTP ready — sending as ${mailFrom()} via ${env.SMTP_HOST}:${env.SMTP_PORT}`);
+    return true;
+  } catch (err) {
+    console.error(`[mailer] SMTP credentials rejected by ${env.SMTP_HOST}: ${err.message}`);
+    return false;
+  }
+}
+
+/** From: header. Falls back to the SMTP username, which providers accept. */
+function mailFrom() {
+  return env.MAIL_FROM || env.SMTP_USER || 'no-reply@pingone.local';
+}
+
+/**
+ * Low-level delivery.
+ *
+ * Throws on a genuine send failure so the caller can decide what that means —
+ * see the note in requestPasswordReset about why it deliberately doesn't turn
+ * into a 500.
+ *
  * @param {{ to: string, subject: string, text: string }} message
  */
 async function deliver(message) {
-  if (isProd) {
-    // TODO: integrate a real email provider before shipping.
-    console.warn('[mailer] No email provider configured — email NOT sent:', message.subject);
+  if (!isSmtpConfigured) {
+    // Loud in production: shipping without a mail provider means every
+    // password reset silently fails, and a warning per send is the only
+    // signal anyone gets.
+    if (isProd) {
+      console.warn(`[mailer] No SMTP configured — email NOT sent: "${message.subject}" to ${message.to}`);
+      return;
+    }
+
+    console.log('\n📧 [dev mailer] --------------------------------------------');
+    console.log('   NOT ACTUALLY SENT — no SMTP configured. Set SMTP_* in .env.');
+    console.log(`   to:      ${message.to}`);
+    console.log(`   subject: ${message.subject}`);
+    console.log(`   ${message.text.replace(/\n/g, '\n   ')}`);
+    console.log('   -----------------------------------------------------------\n');
     return;
   }
 
-  console.log('\n📧 [dev mailer] --------------------------------------------');
-  console.log(`   to:      ${message.to}`);
-  console.log(`   subject: ${message.subject}`);
-  console.log(`   ${message.text.replace(/\n/g, '\n   ')}`);
-  console.log('   -----------------------------------------------------------\n');
+  const info = await getTransport().sendMail({
+    from: mailFrom(),
+    to: message.to,
+    subject: message.subject,
+    text: message.text,
+  });
+
+  console.log(`[mailer] sent "${message.subject}" to ${message.to} (id ${info.messageId})`);
 }
 
 /**

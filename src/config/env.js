@@ -106,6 +106,26 @@ const envSchema = z.object({
   ),
   TWILIO_AUTH_TOKEN: optional(z.string().trim().min(10).optional()),
 
+  // ---- Outbound email (SMTP) --------------------------------------
+  // Transactional mail the SERVER sends as itself: password-reset links and
+  // permanent-failure alerts. Nothing to do with the Gmail platform adapter,
+  // which sends as a connected user via OAuth.
+  //
+  // Leave unset and mail is printed to the console instead of sent — fine for
+  // a demo, useless for a real inbox. Works with any SMTP provider (Gmail app
+  // password, Brevo, Mailtrap, SES, Resend, Postmark…).
+  SMTP_HOST: optional(z.string().trim().min(1).optional()),
+  SMTP_PORT: optional(z.coerce.number().int().positive().max(65535).default(587)),
+  SMTP_USER: optional(z.string().trim().min(1).optional()),
+  SMTP_PASS: optional(z.string().min(1).optional()),
+  // Implicit TLS from the first byte (port 465). Port 587 uses STARTTLS
+  // instead and must leave this false — setting both is the single most
+  // common way SMTP hangs until it times out.
+  SMTP_SECURE: optional(z.enum(['true', 'false']).optional()),
+  // What recipients see in From:. Many providers reject a From: that isn't a
+  // domain you've verified with them, so this defaults to SMTP_USER.
+  MAIL_FROM: optional(z.string().trim().min(1).optional()),
+
   // Max size of an uploaded contacts CSV, in megabytes.
   CSV_MAX_UPLOAD_MB: z.coerce.number().positive().max(50).default(5),
 
@@ -132,6 +152,14 @@ const envSchema = z.object({
   // Shared secret passed to Telegram's setWebhook as `secret_token`; Telegram
   // returns it in the X-Telegram-Bot-Api-Secret-Token header on every update.
   TELEGRAM_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
+
+  // Poll Telegram with getUpdates instead of waiting for webhook callbacks.
+  // A webhook needs a public HTTPS origin, so on a laptop without a tunnel
+  // no updates ever arrive and no contact can be linked — polling is the
+  // local substitute. Unset means "on in development, off elsewhere"; set it
+  // explicitly to override. Harmless if a webhook IS registered: Telegram
+  // answers getUpdates with 409 and the worker stands down on its own.
+  TELEGRAM_POLLING: optional(z.enum(['true', 'false']).optional()),
 
   // ---- Telegram user accounts (MTProto) ---------------------------
   // Register an application at https://my.telegram.org -> API development
@@ -176,6 +204,17 @@ export const isMetaOAuthConfigured = Boolean(
 export const isTelegramUserConfigured = Boolean(
   env.TELEGRAM_API_ID && env.TELEGRAM_API_HASH
 );
+// Whether real email can be sent. Host + credentials are all required — a
+// half-filled SMTP block is the same as none, and silently falling back is
+// better than the app refusing to boot over an optional feature.
+export const isSmtpConfigured = Boolean(
+  env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS
+);
+// getUpdates polling as a webhook substitute. Defaults to on in development
+// (where a public callback URL usually doesn't exist) and off otherwise, so a
+// deployment with a real webhook never starts a competing poller by accident.
+export const isTelegramPollingEnabled =
+  env.TELEGRAM_POLLING === undefined ? isDev : env.TELEGRAM_POLLING === 'true';
 // No redirect URI here: Twilio Connect takes the callback from the Connect
 // App's own dashboard configuration, not from the authorize request.
 export const isTwilioConnectConfigured = Boolean(

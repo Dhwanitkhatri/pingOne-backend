@@ -222,7 +222,19 @@ export async function requestPasswordReset({ email }) {
   ]);
 
   const resetUrl = `${env.FRONTEND_URL}/reset-password?token=${rawToken}`;
-  await sendPasswordResetEmail(user.email, resetUrl, env.PASSWORD_RESET_TTL_MIN);
+
+  // A failed send must NOT become a 500. The controller answers identically
+  // for known and unknown emails precisely so an attacker can't enumerate
+  // accounts — and a 500 that only ever happens for real users would hand
+  // back exactly that signal. Log it loudly instead; the operator sees the
+  // cause in the server log, the caller sees the same reply either way.
+  try {
+    await sendPasswordResetEmail(user.email, resetUrl, env.PASSWORD_RESET_TTL_MIN);
+  } catch (err) {
+    console.error(
+      `[auth] password reset token was created for ${user.email} but the email could not be sent: ${err.message}`
+    );
+  }
 }
 
 /**
