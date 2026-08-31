@@ -14,3 +14,18 @@ export const updatePreferences = asyncHandler(async (req, res) => {
   const preferences = await usersService.updatePreferences(req.user.id, req.body);
   res.status(200).json({ message: 'Preferences updated', data: preferences });
 });
+
+export const updateProfile = asyncHandler(async (req, res) => {
+  const user = await usersService.updateProfile(req.user.id, req.body);
+  res.status(200).json({ message: 'Profile updated', data: user });
+});
+
+export const changePassword = asyncHandler(async (req, res) => {
+  await usersService.changePassword(req.user.id, req.body);
+  res.status(200).json({ message: 'Password changed successfully' });
+});
+
+export const deleteAccount = asyncHandler(async (req, res) => {
+  await usersService.deleteAccount(req.user.id, req.body);
+  res.status(200).json({ message: 'Account deleted successfully' });
+});
