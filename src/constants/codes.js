@@ -73,6 +73,28 @@ export const PLATFORM = Object.freeze({
   SMS: 'sms',
 });
 
+/**
+ * Where a TemplateVariable's value comes from. MANUAL is one value for the
+ * whole send, typed when the template is picked; CONTACT is read off each
+ * recipient's own row, so it differs per delivery.
+ */
+export const VARIABLE_SOURCE = Object.freeze({
+  MANUAL: 'manual',
+  CONTACT: 'contact',
+});
+
+/**
+ * Which field of a Contact a CONTACT-sourced variable reads. The resolvers
+ * live in modules/templates/contact-fields.js — add to both or neither.
+ */
+export const CONTACT_FIELD = Object.freeze({
+  FIRST_NAME: 'first_name',
+  LAST_NAME: 'last_name',
+  FULL_NAME: 'full_name',
+  EMAIL: 'email',
+  PHONE: 'phone',
+});
+
 // Retry backoff schedule (ms) — attempt 1 fails -> wait BACKOFF[0] -> attempt 2 ...
 export const RETRY_BACKOFF_MS = [30_000, 2 * 60_000, 10 * 60_000];
 export const MAX_RETRY_ATTEMPTS = RETRY_BACKOFF_MS.length;

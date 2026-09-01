@@ -14,7 +14,8 @@ import multer from 'multer';
 import { AppError } from '../utils/AppError.js';
 import { env, isProd } from '../config/env.js';
 
-// eslint-disable-next-line no-unused-vars -- Express needs the 4-arg signature
+// `next` is unused but MUST be declared: Express identifies error middleware
+// by arity, and a 3-arg version would silently never be called.
 export function errorHandler(err, req, res, next) {
   // 1) Our own operational errors
   if (err instanceof AppError) {

@@ -306,12 +306,24 @@ model Template {
   @@map("templates")
 }
 
+/// A {placeholder} in a Template's content, plus where its value comes from.
+///
+/// `source` splits the two fill modes:
+///   'manual'  — the sender types a value when they pick the template; one
+///               value for the whole send, substituted before the message row
+///               is written.
+///   'contact' — read off each recipient's own Contact row (`contactField`),
+///               so the value differs per delivery. These placeholders stay
+///               literal in Message.content and are substituted by the
+///               delivery worker, one recipient at a time.
 model TemplateVariable {
   id           Int      @id @default(autoincrement())
   templateId   Int      @map("template_id")
   variableName String   @map("variable_name") @db.VarChar(50)
   defaultValue String?  @map("default_value") @db.VarChar(255)
   isRequired   Boolean  @default(false) @map("is_required")
+  source       String   @default("manual") @db.VarChar(20)
+  contactField String?  @map("contact_field") @db.VarChar(30)
   template     Template @relation(fields: [templateId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([templateId, variableName])

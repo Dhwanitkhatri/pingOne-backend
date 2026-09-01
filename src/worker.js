@@ -24,7 +24,6 @@ import { connection } from './queue/bull.queue.js';
 import { workerManager } from './utils/worker-manager.js';
 import { authenticate } from './middleware/authenticate.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { env } from './config/env.js';
 import { verifyMailer } from './utils/mailer.js';
 import workerHealthRoutes from './modules/worker-health/worker-health.routes.js';
 
@@ -72,8 +71,9 @@ async function startWorkers() {
   // Error handler
   app.use(errorHandler);
 
-  // Try to start health check server, but don't fail if port is unavailable
-  let server = null;
+  // Try to start health check server, but don't fail if port is unavailable.
+  // Declared without an initialiser because both paths below assign it.
+  let server;
   try {
     server = await new Promise((resolve, reject) => {
       const srv = app.listen(WORKER_HEALTH_PORT, () => {

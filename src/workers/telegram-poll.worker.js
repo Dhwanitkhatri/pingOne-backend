@@ -257,7 +257,10 @@ async function getUpdates(token, state) {
     });
   } catch (err) {
     if (state.stopped) return [];
-    throw new Error(`getUpdates request failed (${err.message})`);
+    // Keep the original as `cause`: the message alone loses the stack and the
+    // error code (ECONNREFUSED vs. a TLS failure vs. an abort), which is
+    // exactly what you want when polling starts failing in production.
+    throw new Error(`getUpdates request failed (${err.message})`, { cause: err });
   } finally {
     clearTimeout(timeout);
     state.controller = null;

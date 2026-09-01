@@ -33,6 +33,18 @@ ALTER TABLE job_recipients
         (contact_id IS NULL AND group_id IS NOT NULL)
     );
 
+-- template_variables: a 'contact' variable needs a field to read, and a
+-- 'manual' one must not carry a field that would silently never be used.
+-- The app enforces this in Zod (templates.schema.js); this stops anything
+-- else writing a row the delivery worker can't interpret.
+ALTER TABLE template_variables DROP CONSTRAINT IF EXISTS chk_tv_source_field;
+ALTER TABLE template_variables
+    ADD CONSTRAINT chk_tv_source_field
+    CHECK (
+        (source = 'manual'  AND contact_field IS NULL) OR
+        (source = 'contact' AND contact_field IS NOT NULL)
+    );
+
 -- ------------------------------------------------------------
 -- Partial indexes (WHERE deleted_at IS NULL) — speed up the
 -- common "only live rows" queries on soft-deletable tables.

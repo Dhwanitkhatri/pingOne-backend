@@ -21,6 +21,8 @@ import { resolveRecipientHandle } from '../modules/scheduler/recipient-resolver.
 import { enqueueRetry } from '../queue/queue.service.js';
 import { transitionStatus } from '../modules/deliveries/delivery-status.service.js';
 import { loadAttachmentsForSend } from '../modules/messages/attachments.service.js';
+import { personalizeForContact } from '../modules/templates/templates.service.js';
+import { CONTACT_VARIABLE_INCLUDE } from '../modules/templates/contact-fields.js';
 import { MESSAGE_STATUS, CHANGED_BY } from '../constants/codes.js';
 import { notifyPermanentFailure } from '../modules/notifications/notifications.service.js';
 import { workerManager } from '../utils/worker-manager.js';
@@ -66,10 +68,18 @@ async function processDeliveryJob(job) {
   const delivery = await prisma.messageDelivery.findUnique({
     where: { id: deliveryId },
     include: {
-      contact: true,
+      // The extra emails/phones are what a `contact`-sourced template variable
+      // reads; see contact-fields.js. Loaded unconditionally because the
+      // template's variables aren't known until after this query.
+      contact: { include: CONTACT_VARIABLE_INCLUDE },
       platform: true,
       status: true,
-      job: { include: { message: { include: { template: true } }, user: true } },
+      job: {
+        include: {
+          message: { include: { template: { include: { variables: true } } } },
+          user: true,
+        },
+      },
     },
   });
   if (!delivery) {
@@ -118,8 +128,19 @@ async function processDeliveryJob(job) {
     // doing only if large broadcasts with attachments become common.
     const attachments = await loadAttachmentsForSend(delivery.job.messageId);
 
+    // Pass 2 of template rendering: Message.content still carries the literal
+    // {placeholders} of any `contact`-sourced variables, because one message
+    // row is shared by every recipient. Fill them from THIS recipient before
+    // the adapter sees the text. A no-op for a plain message or a template
+    // with only manual variables. See templates.service.js for the two passes.
+    const content = personalizeForContact(
+      delivery.job.message.content,
+      delivery.job.message.template?.variables,
+      delivery.contact
+    );
+
     const adapter = getAdapter(delivery.platform.code);
-    const formatted = adapter.formatMessage(delivery.job.message.content, attachments);
+    const formatted = adapter.formatMessage(content, attachments);
     const result = await adapter.send(credential, { handle }, formatted);
 
     await transitionStatus({
