@@ -174,6 +174,11 @@ const envSchema = z.object({
   // which would stop the app booting over a placeholder.
   TELEGRAM_API_ID: optional(z.coerce.number().int().positive().optional()),
   TELEGRAM_API_HASH: optional(z.string().trim().min(1).optional()),
+
+  // ---- Gemini AI (optional) -----------------------------------------
+  // API key for Google's Gemini API, used by the AI message generation
+  // feature. Get one at https://aistudio.google.com/apikey
+  GEMINI_API_KEY: optional(z.string().trim().min(1).optional()),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -220,3 +225,5 @@ export const isTelegramPollingEnabled =
 export const isTwilioConnectConfigured = Boolean(
   env.TWILIO_CONNECT_APP_SID && env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN
 );
+// Gemini AI — used by the /ai/generate-message endpoint.
+export const isGeminiConfigured = Boolean(env.GEMINI_API_KEY);

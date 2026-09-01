@@ -21,6 +21,7 @@ import templateRoutes from '../modules/templates/templates.routes.js';
 
 import analyticsRoutes from '../modules/analytics/analytics.routes.js';
 import webhookRoutes from '../modules/webhooks/webhooks.routes.js';
+import aiRoutes from '../modules/ai/ai.routes.js';
 
 const router = Router();
 
@@ -46,6 +47,7 @@ router.use('/messages', messageRoutes);
 router.use('/scheduler', schedulerRoutes);
 router.use('/templates', templateRoutes);
 router.use('/analytics', analyticsRoutes);
+router.use('/ai', aiRoutes);
 
 // PUBLIC — no authenticate middleware. Meta and Telegram call these and have no
 // PingOne session; each request is authenticated by HMAC signature / shared
