@@ -5,6 +5,13 @@
 import { z } from "zod";
 
 export const createMessageSchema = z.object({
+  subject: z
+    .string()
+    .trim()
+    .min(1, "Subject cannot be empty")
+    .max(250, "Subject is too long")
+    .optional(),
+
   content: z
     .string()
     .trim()
@@ -19,6 +26,14 @@ export const createMessageSchema = z.object({
 });
 
 export const updateMessageSchema = z.object({
+  subject: z
+    .string()
+    .trim()
+    .min(1, "Subject cannot be empty")
+    .max(250, "Subject is too long")
+    .nullable()
+    .optional(),
+
   content: z
     .string()
     .trim()

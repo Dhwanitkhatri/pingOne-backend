@@ -12,6 +12,7 @@ const publicMessageSelect = {
   id: true,
   userId: true,
   templateId: true,
+  subject: true,
   content: true,
   createdAt: true,
   updatedAt: true,
@@ -31,7 +32,7 @@ const publicMessageSelect = {
 /**
  * Create a new message.
  */
-export async function createMessage({ userId, content, templateId = null }) {
+export async function createMessage({ userId, subject = null, content, templateId = null }) {
   // Verify template ownership (if provided)
   if (templateId) {
     const template = await prisma.template.findFirst({
@@ -54,6 +55,7 @@ export async function createMessage({ userId, content, templateId = null }) {
   const message = await prisma.message.create({
     data: {
       userId,
+      subject,
       content,
       templateId,
     },
@@ -105,6 +107,7 @@ export async function getMessageById(messageId, userId) {
 export async function updateMessage({
   messageId,
   userId,
+  subject,
   content,
   templateId,
 }) {
@@ -146,6 +149,7 @@ export async function updateMessage({
     },
     data: {
       ...(content !== undefined && { content }),
+      ...(subject !== undefined && { subject }),
       ...(templateId !== undefined && { templateId }),
     },
     select: publicMessageSelect,

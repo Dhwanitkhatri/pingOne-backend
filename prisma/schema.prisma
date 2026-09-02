@@ -334,6 +334,7 @@ model Message {
   id            Int                 @id @default(autoincrement())
   userId        Int                 @map("user_id")
   templateId    Int?                @map("template_id")
+  subject       String?             @db.VarChar(250)
   content       String
   createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
