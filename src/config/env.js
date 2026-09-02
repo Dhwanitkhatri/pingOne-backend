@@ -180,7 +180,9 @@ const envSchema = z.object({
   // Keeping this optional lets local development and all non-AI features boot
   // normally without an AI provider account.
   AI_API_KEY: optional(z.string().trim().min(1).optional()),
-  AI_MODEL: z.string().trim().default('gpt-5-mini'),
+  // `optional` turns AI_MODEL= into undefined, so blank and missing values
+  // both safely use the default rather than making an invalid provider call.
+  AI_MODEL: optional(z.string().trim().min(1).optional()).default('gpt-5-mini'),
   AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
 });
 

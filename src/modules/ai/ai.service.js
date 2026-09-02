@@ -11,25 +11,40 @@ import { generateStructuredContent } from './providers/openai.provider.js';
 
 // Matches PingOne template variables such as {name} and {appointment_date}.
 const PLACEHOLDER_RE = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
-// Reject attempts to change the model's role or extract confidential details.
-const PROMPT_INJECTION_RE = /\b(ignore|forget|reveal|show)\b[^\n]{0,100}\b(instruction|system prompt|developer message|api key|secret|environment variable|credential)\b|\b(malware|hack(?:ing)?|exploit)\b/i;
-// Detect direct requests for unrelated generation before they reach the model.
-const UNRELATED_TASK_RE = /\b(write|generate|create|build|explain|help(?: me)?)\b[^\n]{0,100}\b(code|program|script|react|node(?:\.js)?|javascript|typescript|python|sql|database|api|website|application|essay|research paper)\b/i;
-// Technical subjects are permitted when the user wants to communicate about
-// them (for example, an email about a JavaScript deployment).
-const MESSAGE_CONTEXT_RE = /\b(message|email|sms|whatsapp|telegram|reminder|reply|subject|client|customer|recipient|appointment|invite|audience)\b/i;
+// Reject attempts to override the assistant's purpose, extract protected
+// information, or turn it into a general-purpose assistant. These checks are
+// applied only to the instruction prompt, never to existing message content.
+const PROMPT_INJECTION_RE = /\b(ignore|disregard|override|forget)\b[^\n]{0,120}\b(previous|prior|system|developer|instruction)s?\b|\b(reveal|show|print|display|tell me)\b[^\n]{0,120}\b(system|developer|internal)?\s*(instruction|prompt|message|api[ _-]?key|secret|token|credential|environment variable)s?\b|\b(act as|behave as|become)\b[^\n]{0,80}\b(general(?:-purpose)? (?:ai |)assistant|chatbot|coding assistant)\b/i;
+
+// Direct non-communication output requests are unsupported unless the same
+// prompt clearly says the output itself is a message or email about that topic.
+const UNSUPPORTED_OUTPUT_RE = /\b(write|generate|create|build|explain|answer|help(?: me)?|how do i)\b[^\n]{0,120}\b(code|program|script|react(?: application| app)?|node(?:\.js)?|javascript|typescript|python|sql|database|api|website|application|essay|research paper)\b/i;
+const COMMUNICATION_CONTEXT_RE = /\b(message|email|sms|whatsapp|telegram|reminder|reply|subject|client|customer|recipient|appointment|invite|invitation|audience|greeting|birthday|wish|congratulat(?:e|ion)|thank(?: you)?|apolog(?:y|ize)|announcement|follow[ -]?up|note)\b/i;
+
+// New drafts need an explicit communication purpose. Editing operations are
+// already constrained by their operation and required existing content, so
+// prompts such as "Make it friendlier" remain valid.
+const GENERATION_INTENT_RE = COMMUNICATION_CONTEXT_RE;
 
 /** Returns every valid template token in a string as a unique set. */
 function placeholders(text) {
   return new Set([...text.matchAll(PLACEHOLDER_RE)].map((match) => match[0]));
 }
 
-/** Enforces the product boundary independently of model instructions. */
-function ensureSupportedTask(prompt) {
-  // A communication request may legitimately mention a technical topic (for
-  // example, an email about a Node.js deployment). Reject direct programming
-  // tasks while still allowing messages *about* that topic.
-  if (PROMPT_INJECTION_RE.test(prompt) || (UNRELATED_TASK_RE.test(prompt) && !MESSAGE_CONTEXT_RE.test(prompt))) {
+/**
+ * Enforces PingOne's messaging-only product boundary independently of model
+ * instructions. Existing content is deliberately excluded: users may send a
+ * legitimate message that mentions technical terms such as SQL or Node.js.
+ */
+export function assertSupportedAiTask({ operation, prompt }) {
+  const hasCommunicationContext = COMMUNICATION_CONTEXT_RE.test(prompt);
+  const asksForUnsupportedOutput = UNSUPPORTED_OUTPUT_RE.test(prompt);
+
+  if (
+    PROMPT_INJECTION_RE.test(prompt) ||
+    (operation === 'generate' && !GENERATION_INTENT_RE.test(prompt)) ||
+    (asksForUnsupportedOutput && !hasCommunicationContext)
+  ) {
     throw AppError.badRequest('Only message and email generation tasks are supported.', {
       code: 'UNSUPPORTED_AI_TASK',
     });
@@ -82,7 +97,7 @@ function buildInstructions(type) {
  * @returns {Promise<{type: 'message', content: string}|{type: 'email', subject: string, content: string}>}
  */
 export async function generateAiContent(userId, request) {
-  ensureSupportedTask(request.prompt);
+  assertSupportedAiTask(request);
   // Serialize all user fields as data so they are clearly distinct from the
   // fixed provider instructions. Defaults give consistent output when optional
   // controls are not selected in the client UI.
@@ -108,15 +123,16 @@ export async function generateAiContent(userId, request) {
   }
 
   const result = parsed.data;
-  if (request.content) {
-    // A rewritten template must retain all existing placeholders so the
-    // delivery worker can still personalize it for each contact.
-    const missing = [...placeholders(request.content)].filter((placeholder) => !placeholders(result.content).has(placeholder));
-    if (missing.length) {
-      throw new AppError(422, 'AI response did not preserve template placeholders', {
-        code: 'AI_PLACEHOLDER_NOT_PRESERVED', details: missing,
-      });
-    }
-  }
+  if (request.content) assertTemplatePlaceholdersPreserved(request.content, result.content);
   return result;
+}
+
+/** Ensures AI transformations retain every valid PingOne template token. */
+export function assertTemplatePlaceholdersPreserved(original, generated) {
+  const missing = [...placeholders(original)].filter((placeholder) => !placeholders(generated).has(placeholder));
+  if (missing.length) {
+    throw new AppError(422, 'AI response did not preserve template placeholders', {
+      code: 'AI_PLACEHOLDER_NOT_PRESERVED', details: missing,
+    });
+  }
 }

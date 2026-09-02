@@ -6,6 +6,7 @@
 // ============================================================
 
 import { z } from 'zod';
+import { PLATFORM } from '../../constants/codes.js';
 
 // Operations intentionally cover only message/email drafting work. Keeping
 // the enum closed prevents the endpoint becoming a general AI interface.
@@ -33,6 +34,7 @@ const contentOperations = [
 // Shared string rule: trim whitespace, reject empty values, and bound input
 // size to control cost and avoid accepting unbounded request bodies.
 const trimmedText = (max, label) => z.string().trim().min(1, `${label} is required`).max(max);
+const platformSchema = z.enum(Object.values(PLATFORM));
 
 /**
  * Input for POST /ai/generate. All fields except prompt are optional controls.
@@ -47,7 +49,7 @@ export const generateAiSchema = z
     tone: z.enum(['professional', 'formal', 'friendly', 'casual', 'polite', 'promotional']).optional(),
     language: z.string().trim().min(1).max(80).optional(),
     length: z.enum(['short', 'medium', 'long']).optional(),
-    platform: z.enum(['whatsapp', 'telegram', 'sms', 'gmail']).optional(),
+    platform: platformSchema.optional(),
     purpose: z.string().trim().min(1).max(160).optional(),
     audience: z.string().trim().min(1).max(160).optional(),
   })
@@ -66,6 +68,22 @@ export const generateAiSchema = z
         code: z.ZodIssueCode.custom,
         path: ['language'],
         message: 'language is required for the translate operation',
+      });
+    }
+    // Gmail is PingOne's email transport. All other platforms carry a plain
+    // message, so reject combinations that cannot preserve the requested type.
+    if (value.type === 'email' && value.platform && value.platform !== PLATFORM.GMAIL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['platform'],
+        message: 'Email content can only use the gmail platform',
+      });
+    }
+    if (value.type === 'message' && value.platform === PLATFORM.GMAIL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['platform'],
+        message: 'Use type "email" for the gmail platform',
       });
     }
   });
