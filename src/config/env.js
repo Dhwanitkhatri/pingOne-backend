@@ -174,6 +174,14 @@ const envSchema = z.object({
   // which would stop the app booting over a placeholder.
   TELEGRAM_API_ID: optional(z.coerce.number().int().positive().optional()),
   TELEGRAM_API_HASH: optional(z.string().trim().min(1).optional()),
+
+  // ---- AI content assistant (optional) --------------------------
+  // The AI endpoint remains unavailable until a server-only API key is set.
+  // Keeping this optional lets local development and all non-AI features boot
+  // normally without an AI provider account.
+  AI_API_KEY: optional(z.string().trim().min(1).optional()),
+  AI_MODEL: z.string().trim().default('gpt-5-mini'),
+  AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -220,3 +228,4 @@ export const isTelegramPollingEnabled =
 export const isTwilioConnectConfigured = Boolean(
   env.TWILIO_CONNECT_APP_SID && env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN
 );
+export const isAiConfigured = Boolean(env.AI_API_KEY);
