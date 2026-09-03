@@ -17,7 +17,7 @@
 
 import { Router } from "express";
 
-import * as messageController from "./messages.controlller.js";
+import * as messageController from "./messages.controller.js";
 import * as attachmentController from "./attachments.controller.js";
 
 import { authenticate } from "../../middleware/authenticate.js";

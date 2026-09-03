@@ -145,7 +145,7 @@ export async function cancelSchedule(userId, jobId) {
  */
 export async function sendOrSchedule(
   userId,
-  { messageId, content, templateId, scheduledAt, recipients, skipIfReplied }
+  { messageId, subject, content, templateId, scheduledAt, recipients, skipIfReplied }
 ) {
   const when = scheduledAt ?? new Date();
   const immediate = when.getTime() <= Date.now();
@@ -157,7 +157,7 @@ export async function sendOrSchedule(
 
   const job = await createSchedule(userId, {
     messageId,
-    message: messageId ? undefined : { content, templateId },
+    message: messageId ? undefined : { subject, content, templateId },
     scheduledAt: when,
     recurrence: undefined, // the composer only creates one-time sends
     recipients,
@@ -205,8 +205,13 @@ async function resolveRecipients(recipients) {
 // commits independently. Fine here (an orphaned Message with no ScheduledJob
 // is harmless), but don't assume this rolls back together with the job/rule
 // creation below it.
-async function createInlineMessage(userId, { content, templateId }) {
-  const message = await messagesService.createMessage({ userId, content, templateId: templateId ?? null });
+async function createInlineMessage(userId, { subject, content, templateId }) {
+  const message = await messagesService.createMessage({
+    userId,
+    subject: subject ?? null,
+    content,
+    templateId: templateId ?? null,
+  });
   return message.id;
 }
 

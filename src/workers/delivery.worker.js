@@ -141,7 +141,14 @@ async function processDeliveryJob(job) {
 
     const adapter = getAdapter(delivery.platform.code);
     const formatted = adapter.formatMessage(content, attachments);
-    const result = await adapter.send(credential, { handle }, formatted);
+    // Gmail uses the optional subject; other adapters ignore the fourth
+    // argument and continue sending their plain message body unchanged.
+    const result = await adapter.send(
+      credential,
+      { handle },
+      formatted,
+      delivery.job.message.subject ?? undefined
+    );
 
     await transitionStatus({
       deliveryId,
