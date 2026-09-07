@@ -175,10 +175,15 @@ const envSchema = z.object({
   TELEGRAM_API_ID: optional(z.coerce.number().int().positive().optional()),
   TELEGRAM_API_HASH: optional(z.string().trim().min(1).optional()),
 
-  // ---- Gemini AI (optional) -----------------------------------------
-  // API key for Google's Gemini API, used by the AI message generation
-  // feature. Get one at https://aistudio.google.com/apikey
-  GEMINI_API_KEY: optional(z.string().trim().min(1).optional()),
+  // ---- AI content assistant (optional) --------------------------
+  // The AI endpoint remains unavailable until a server-only API key is set.
+  // Keeping this optional lets local development and all non-AI features boot
+  // normally without an AI provider account.
+  AI_API_KEY: optional(z.string().trim().min(1).optional()),
+  // `optional` turns AI_MODEL= into undefined, so blank and missing values
+  // both safely use the default rather than making an invalid provider call.
+  AI_MODEL: optional(z.string().trim().min(1).optional()).default('gpt-5-mini'),
+  AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -225,5 +230,4 @@ export const isTelegramPollingEnabled =
 export const isTwilioConnectConfigured = Boolean(
   env.TWILIO_CONNECT_APP_SID && env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN
 );
-// Gemini AI — used by the /ai/generate-message endpoint.
-export const isGeminiConfigured = Boolean(env.GEMINI_API_KEY);
+export const isAiConfigured = Boolean(env.AI_API_KEY);
