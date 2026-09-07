@@ -58,6 +58,7 @@ const recurrenceSchema = z
   });
 
 const inlineMessageSchema = z.object({
+  subject: z.string().trim().min(1).max(250).optional(),
   content: z.string().trim().min(1),
   templateId: z.number().int().positive().optional(),
 });
@@ -86,6 +87,7 @@ export const createScheduleSchema = z
 export const sendMessageSchema = z
   .object({
     messageId: z.number().int().positive().optional(),
+    subject: z.string().trim().min(1).max(250).optional(),
     content: z.string().trim().min(1).max(10000).optional(),
     templateId: z.number().int().positive().optional(),
     scheduledAt: z.coerce.date().optional(),

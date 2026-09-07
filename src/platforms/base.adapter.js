@@ -43,9 +43,10 @@ export class BaseAdapter {
    * @param {{ secret: string, extraInfo: object }} credential  decrypted
    * @param {{ handle: string }} recipient  platform-specific address (chat id, email, phone, ...)
    * @param {{ formatted: string|object, attachments: Attachment[] }} message  output of formatMessage()
+   * @param {string|undefined} subject  email subject; ignored by non-email adapters
    * @returns {Promise<{ platformMessageId: string, raw?: object }>}
    */
-  async send(_credential, _recipient, _message) {
+  async send(_credential, _recipient, _message, _subject) {
     throw new Error(`${this.constructor.name}.send() not implemented`);
   }
 }
