@@ -1,10 +1,20 @@
 // ============================================================
-// Local-disk storage for message attachments.
+// Disk-backed storage for message attachments.
 //
 // Files land in UPLOAD_DIR/attachments/<uuid><ext> and are served back over
 // HTTP as PUBLIC_BASE_URL/uploads/attachments/<uuid><ext>. Swapping this for
 // S3/R2 later means reimplementing the three exported functions and nothing
 // else — no caller touches the filesystem directly.
+//
+// IN PRODUCTION UPLOAD_DIR MUST POINT AT A RENDER PERSISTENT DISK
+// (e.g. /var/data/uploads). Render's default filesystem is ephemeral: it is
+// rebuilt on every deploy, restart and crash, so an attachment written there
+// is gone by the time a scheduled job fires hours later. See render.yaml.
+//
+// Only the API service mounts that disk — a Render disk can be attached to
+// exactly ONE service, and the delivery worker is a second one. So the worker
+// cannot read these files from its own filesystem and reaches them over HTTP
+// instead; readAttachmentBytes below handles both processes transparently.
 //
 // Security note: the stored filename is always a fresh UUID plus a whitelisted
 // extension. The client's original filename is kept in the DB for display only
@@ -67,10 +77,13 @@ export async function saveAttachment(file) {
  * Load an attachment's bytes. Adapters that upload media directly (Gmail MIME,
  * Telegram multipart, WhatsApp /media) need the actual content, not a link.
  *
- * Reads from disk when the URL is one of ours — which also means attachments
- * work in local dev where PUBLIC_BASE_URL isn't reachable from outside. Falls
- * back to an HTTP fetch so already-stored remote URLs keep working after a
- * migration to object storage.
+ * Tries the local disk first — that's the fast path in the API process and in
+ * local dev, where PUBLIC_BASE_URL isn't reachable from outside anyway. When
+ * the file isn't on THIS process's filesystem it falls back to an HTTP fetch,
+ * which is what makes the delivery worker work: the disk belongs to the API
+ * service, so from the worker every attachment is simply a remote URL. The
+ * same fallback covers already-stored remote URLs after a future move to
+ * object storage.
  */
 export async function readAttachmentBytes(attachment) {
   const localName = toLocalStoredName(attachment.fileUrl);
@@ -79,21 +92,19 @@ export async function readAttachmentBytes(attachment) {
     try {
       return await fs.readFile(path.join(attachmentDir, localName));
     } catch (err) {
-      throw new AppError(500, `Attachment "${attachment.fileName}" is missing from storage`, {
-        code: 'ATTACHMENT_FILE_MISSING',
-        details: err.message,
-      });
+      // ENOENT here is expected in the worker and only there. Anything else
+      // (EACCES, EIO — a disk that failed to mount) is a real fault worth
+      // reporting rather than papering over with a network round-trip.
+      if (err.code !== 'ENOENT') {
+        throw new AppError(500, `Attachment "${attachment.fileName}" could not be read from storage`, {
+          code: 'ATTACHMENT_FILE_UNREADABLE',
+          details: err.message,
+        });
+      }
     }
   }
 
-  const res = await fetch(attachment.fileUrl);
-  if (!res.ok) {
-    throw new AppError(500, `Could not download attachment "${attachment.fileName}"`, {
-      code: 'ATTACHMENT_FETCH_FAILED',
-      details: `${res.status} ${res.statusText}`,
-    });
-  }
-  return Buffer.from(await res.arrayBuffer());
+  return fetchAttachmentBytes(attachment);
 }
 
 /**
@@ -114,6 +125,46 @@ export async function deleteAttachment(fileUrl) {
 }
 
 // ---- internal helpers ----------------------------------------------
+
+/** How long a single attachment download may take before a delivery gives up. */
+const FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Download an attachment over HTTP. The worker's normal read path.
+ *
+ * A 404 on one of our OWN urls is the signature of an ephemeral filesystem
+ * eating the upload, so it gets its own message — that's a deployment problem
+ * (UPLOAD_DIR not on the persistent disk), not a bad attachment.
+ */
+async function fetchAttachmentBytes(attachment) {
+  const isOurs = toLocalStoredName(attachment.fileUrl) !== null;
+
+  let res;
+  try {
+    res = await fetch(attachment.fileUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch (err) {
+    throw new AppError(500, `Could not download attachment "${attachment.fileName}"`, {
+      code: 'ATTACHMENT_FETCH_FAILED',
+      details: err.name === 'TimeoutError' ? `timed out after ${FETCH_TIMEOUT_MS}ms` : err.message,
+    });
+  }
+
+  if (!res.ok) {
+    if (isOurs && res.status === 404) {
+      throw new AppError(500, `Attachment "${attachment.fileName}" is missing from storage`, {
+        code: 'ATTACHMENT_FILE_MISSING',
+        details:
+          'The file is not on the API service any more. Check that UPLOAD_DIR points at the mounted persistent disk.',
+      });
+    }
+    throw new AppError(500, `Could not download attachment "${attachment.fileName}"`, {
+      code: 'ATTACHMENT_FETCH_FAILED',
+      details: `${res.status} ${res.statusText}`,
+    });
+  }
+
+  return Buffer.from(await res.arrayBuffer());
+}
 
 function safeExtension(originalName = '') {
   const ext = path.extname(originalName).toLowerCase();

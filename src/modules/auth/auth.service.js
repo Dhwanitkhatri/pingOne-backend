@@ -18,13 +18,19 @@ import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
 
 // Fields safe to return to the client (never the password hash).
-const publicUserSelect = {
+//
+// `role` is included so the SPA can decide whether to offer the back office at
+// all. It is a display hint only — every /admin endpoint re-checks the role
+// server-side (see middleware/authorize.js); nothing trusts this value.
+export const publicUserSelect = {
   id: true,
   firstName: true,
   lastName: true,
   email: true,
   isVerified: true,
   isActive: true,
+  role: true,
+  lastLoginAt: true,
   createdAt: true,
 };
 
@@ -106,8 +112,33 @@ export async function login({ email, password }, session) {
     where: { userId: user.id, expiresAt: { lt: new Date() } },
   });
 
+  const loginAt = await recordLogin(user.id);
   const tokens = await issueAndPersistTokens(user, session);
-  return { user: toPublicUser(user), tokens };
+  return { user: toPublicUser({ ...user, lastLoginAt: loginAt }), tokens };
+}
+
+/**
+ * Stamp a successful credential login.
+ *
+ * This is the sole writer of `users.last_login_at`, and the admin dashboard's
+ * "Active Users" figure is a count over that column — so any new sign-in path
+ * must come through here or it will silently under-report activity.
+ *
+ * A failure to stamp must never fail the login itself: the user authenticated
+ * correctly, and losing one analytics data point is not worth locking them out.
+ *
+ * @returns {Promise<Date>} the timestamp written
+ */
+export async function recordLogin(userId) {
+  const now = new Date();
+
+  try {
+    await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: now } });
+  } catch (err) {
+    console.error(`[auth] could not record last_login_at for user ${userId}: ${err.message}`);
+  }
+
+  return now;
 }
 
 /**
@@ -280,7 +311,7 @@ export async function getProfile(userId) {
   return user;
 }
 
-function toPublicUser(user) {
+export function toPublicUser(user) {
   return {
     id: user.id,
     firstName: user.firstName,
@@ -288,6 +319,8 @@ function toPublicUser(user) {
     email: user.email,
     isVerified: user.isVerified,
     isActive: user.isActive,
+    role: user.role,
+    lastLoginAt: user.lastLoginAt ?? null,
     createdAt: user.createdAt,
   };
 }

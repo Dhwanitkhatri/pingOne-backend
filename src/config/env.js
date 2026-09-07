@@ -6,6 +6,7 @@
 // ============================================================
 
 import 'dotenv/config';
+import path from 'node:path';
 import { z } from 'zod';
 
 /**
@@ -134,7 +135,11 @@ const envSchema = z.object({
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
 
   // ---- Message attachments ----------------------------------------
-  // Where attachment files are written, relative to the project root.
+  // Where attachment files are written. A relative path (the dev default) is
+  // resolved against the project root; in production this must be an ABSOLUTE
+  // path inside a mounted Render persistent disk — e.g. /var/data/uploads —
+  // because the default filesystem is wiped on every deploy and restart, and a
+  // job scheduled for tomorrow would find its attachments gone. See render.yaml.
   UPLOAD_DIR: z.string().trim().default('uploads'),
   ATTACHMENT_MAX_UPLOAD_MB: z.coerce.number().positive().max(100).default(10),
   ATTACHMENT_MAX_FILES: z.coerce.number().int().positive().max(20).default(5),
@@ -227,3 +232,16 @@ export const isTwilioConnectConfigured = Boolean(
 );
 // Gemini AI — used by the /ai/generate-message endpoint.
 export const isGeminiConfigured = Boolean(env.GEMINI_API_KEY);
+
+// A relative UPLOAD_DIR in production means attachments are being written to
+// the container's ephemeral filesystem, where they survive until the next
+// deploy and no longer. That breaks silently and hours late — when a scheduled
+// job finally tries to send — so say it loudly at boot instead. Warn, not
+// exit: an instance that refuses to start is worse than one sending text.
+if (isProd && !path.isAbsolute(env.UPLOAD_DIR)) {
+  console.warn(
+    `⚠️  UPLOAD_DIR="${env.UPLOAD_DIR}" is a relative path. On Render this is ephemeral storage — ` +
+      'attachments will be lost on the next deploy or restart. Point it at a mounted persistent disk ' +
+      '(e.g. /var/data/uploads).'
+  );
+}

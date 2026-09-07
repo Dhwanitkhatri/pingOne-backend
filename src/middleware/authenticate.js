@@ -19,12 +19,16 @@ import { verifyAccessToken } from '../utils/token.js';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
 
+// `role` is resolved here, on every request, rather than read off the token —
+// so revoking an operator's back-office rights takes effect on their very next
+// call instead of at token expiry. middleware/authorize.js reads it.
 const userSelect = {
   id: true,
   email: true,
   firstName: true,
   lastName: true,
   isVerified: true,
+  role: true,
 };
 
 /** Pull the Bearer token out of the Authorization header, if any. */

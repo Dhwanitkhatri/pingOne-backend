@@ -22,6 +22,7 @@ import templateRoutes from '../modules/templates/templates.routes.js';
 import analyticsRoutes from '../modules/analytics/analytics.routes.js';
 import webhookRoutes from '../modules/webhooks/webhooks.routes.js';
 import aiRoutes from '../modules/ai/ai.routes.js';
+import adminRoutes from '../modules/admin/admin.routes.js';
 
 const router = Router();
 
@@ -48,6 +49,10 @@ router.use('/scheduler', schedulerRoutes);
 router.use('/templates', templateRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/ai', aiRoutes);
+
+// Back office. Platform-wide data, gated by role inside the router — see the
+// header comment in admin.routes.js before adding anything to it.
+router.use('/admin', adminRoutes);
 
 // PUBLIC — no authenticate middleware. Meta and Telegram call these and have no
 // PingOne session; each request is authenticated by HMAC signature / shared

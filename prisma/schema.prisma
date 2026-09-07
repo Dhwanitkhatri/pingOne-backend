@@ -8,6 +8,24 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+/// Who a user is allowed to be in the back office.
+///
+/// Deliberately a column on `users` rather than a separate `admins` table:
+/// an admin is a PingOne user who also has back-office rights, so they keep
+/// one identity, one password-reset flow and one session. That is what makes
+/// the "Exit Admin" link in the admin shell meaningful — it drops the operator
+/// back into their own dashboard without a second login.
+///
+/// SUPER_ADMIN is the only role permitted to change another user's role;
+/// see `requireAdmin` / `requireSuperAdmin` in middleware/authorize.js.
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+
+  @@map("user_role")
+}
+
 model Platform {
   id                  Int                      @id @default(autoincrement()) @db.SmallInt
   code                String                   @unique @db.VarChar(20)
@@ -63,9 +81,18 @@ model User {
   passwordHash            String                   @map("password_hash") @db.VarChar(255)
   isVerified              Boolean                  @default(false) @map("is_verified")
   isActive                Boolean                  @default(true) @map("is_active")
+  /// Back-office rights. Everyone signing up through the public flow is USER;
+  /// the admin login endpoint refuses anything below ADMIN.
+  role                    UserRole                 @default(USER)
+  /// Last successful credential login. This is what "Active Users" on the
+  /// admin dashboard counts, so it is written on every login — including the
+  /// admin login, which is the same credential check.
+  lastLoginAt             DateTime?                @map("last_login_at") @db.Timestamp(6)
   createdAt               DateTime                 @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt               DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
   deletedAt               DateTime?                @map("deleted_at") @db.Timestamp(6)
+  adminAuditLogs          AdminAuditLog[]          @relation("AdminActor")
+  targetedByAuditLogs     AdminAuditLog[]          @relation("AdminTargetUser")
   contactGroups           ContactGroup[]
   contacts                Contact[]
   messages                Message[]
@@ -78,7 +105,45 @@ model User {
   platformCredentials     UserPlatformCredential[]
 
   @@index([email], map: "idx_users_email")
+  @@index([role], map: "idx_users_role")
+  @@index([createdAt], map: "idx_users_created_at")
+  @@index([lastLoginAt], map: "idx_users_last_login_at")
   @@map("users")
+}
+
+/// Append-only record of everything an admin does in the back office.
+///
+/// Two separate actor/target relations to the same table, because "admin #3
+/// suspended user #91" needs both halves. `targetUser` is nullable so actions
+/// that aren't about a person (a login, a settings change) still record.
+///
+/// Nothing here cascades on delete of the target: an audit trail that
+/// disappears when the evidence is deleted is not an audit trail. The FK is
+/// therefore SetNull, keeping `targetLabel` as the human-readable remnant.
+model AdminAuditLog {
+  id           Int       @id @default(autoincrement())
+  adminId      Int       @map("admin_id")
+  /// Verb, e.g. "admin.login", "user.suspend", "user.role_change".
+  action       String    @db.VarChar(60)
+  /// What kind of thing was acted on: "user", "message", "platform", "system".
+  targetType   String?   @map("target_type") @db.VarChar(30)
+  targetId     Int?      @map("target_id")
+  /// Denormalised label (an email, a platform name) so the feed stays
+  /// readable after the target row is gone.
+  targetLabel  String?   @map("target_label") @db.VarChar(255)
+  /// Free-form context: the before/after of a role change, a failure reason.
+  metadata     Json      @default("{}")
+  ipAddress    String?   @map("ip_address") @db.VarChar(64)
+  userAgent    String?   @map("user_agent") @db.VarChar(255)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  admin        User      @relation("AdminActor", fields: [adminId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  targetUser   User?     @relation("AdminTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  targetUserId Int?      @map("target_user_id")
+
+  @@index([adminId, createdAt], map: "idx_aal_admin_created")
+  @@index([createdAt], map: "idx_aal_created_at")
+  @@index([action], map: "idx_aal_action")
+  @@map("admin_audit_logs")
 }
 
 /// Single-use password-reset tokens. Only the SHA-256 hash of the token is

@@ -6,6 +6,7 @@
 // ============================================================
 
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -41,6 +42,59 @@ const fileTypes = [
   { code: 'audio', mimePrefix: 'audio/' },
   { code: 'document', mimePrefix: 'application/' },
 ];
+
+/**
+ * Bootstrap the first back-office operator.
+ *
+ * Runs only when ADMIN_EMAIL and ADMIN_PASSWORD are both set, so a normal
+ * `db:seed` on a developer machine or a production deploy stays a pure
+ * reference-data seed and never quietly mints a privileged account.
+ *
+ * Idempotent in the safe direction: an existing account is PROMOTED to
+ * SUPER_ADMIN, but its password is left alone. Re-running the seed must not
+ * reset a live operator's password back to whatever is sitting in .env.
+ */
+async function seedAdmin() {
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD;
+
+  if (!email || !password) {
+    console.log('Skipped admin bootstrap — set ADMIN_EMAIL and ADMIN_PASSWORD to create one.');
+    return;
+  }
+
+  if (password.length < 8) {
+    throw new Error('ADMIN_PASSWORD must be at least 8 characters.');
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true, role: true } });
+
+  if (existing) {
+    if (existing.role === 'SUPER_ADMIN') {
+      console.log(`Admin bootstrap: ${email} is already a SUPER_ADMIN — nothing to do.`);
+      return;
+    }
+    await prisma.user.update({ where: { id: existing.id }, data: { role: 'SUPER_ADMIN' } });
+    console.log(`Admin bootstrap: promoted existing account ${email} to SUPER_ADMIN (password unchanged).`);
+    return;
+  }
+
+  const rounds = Number(process.env.BCRYPT_SALT_ROUNDS ?? 12);
+
+  await prisma.user.create({
+    data: {
+      firstName: process.env.ADMIN_FIRST_NAME?.trim() || 'Admin',
+      lastName: process.env.ADMIN_LAST_NAME?.trim() || 'User',
+      email,
+      passwordHash: await bcrypt.hash(password, rounds),
+      role: 'SUPER_ADMIN',
+      isVerified: true,
+      notificationPreferences: { create: {} },
+    },
+  });
+
+  console.log(`Admin bootstrap: created SUPER_ADMIN ${email}.`);
+}
 
 async function main() {
   console.log('Seeding reference tables…');
@@ -81,6 +135,8 @@ async function main() {
     `Seeded: ${platforms.length} platforms, ${messageStatuses.length} statuses, ` +
       `${recurrenceTypes.length} recurrence types, ${fileTypes.length} file types.`
   );
+
+  await seedAdmin();
 }
 
 main()
