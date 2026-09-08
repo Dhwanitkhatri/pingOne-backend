@@ -185,9 +185,10 @@ const envSchema = z.object({
   // Keeping this optional lets local development and all non-AI features boot
   // normally without an AI provider account.
   GEMINI_API_KEY: optional(z.string().trim().min(1).optional()),
+  AI_API_KEY: optional(z.string().trim().min(1).optional()),
   // `optional` turns AI_MODEL= into undefined, so blank and missing values
   // both safely use the default rather than making an invalid provider call.
-  AI_MODEL: optional(z.string().trim().min(1).optional()).default('gpt-5-mini'),
+  AI_MODEL: optional(z.string().trim().min(1).optional()).default('gemini-2.5-flash'),
   AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
 });
 
@@ -201,7 +202,12 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = Object.freeze(parsed.data);
+const resolvedGeminiKey = parsed.data.GEMINI_API_KEY ?? parsed.data.AI_API_KEY;
+
+export const env = Object.freeze({
+  ...parsed.data,
+  GEMINI_API_KEY: resolvedGeminiKey,
+});
 export const isProd = env.NODE_ENV === 'production';
 export const isDev = env.NODE_ENV === 'development';
 
@@ -235,7 +241,7 @@ export const isTelegramPollingEnabled =
 export const isTwilioConnectConfigured = Boolean(
   env.TWILIO_CONNECT_APP_SID && env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN
 );
-export const isAiConfigured = Boolean(env.AI_API_KEY);
+export const isAiConfigured = Boolean(env.GEMINI_API_KEY || env.AI_API_KEY);
 
 // A relative UPLOAD_DIR in production means attachments are being written to
 // the container's ephemeral filesystem, where they survive until the next
