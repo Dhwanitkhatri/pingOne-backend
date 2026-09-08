@@ -1,24 +1,33 @@
 // ============================================================
-// OpenAI provider adapter.
+// Gemini provider adapter.
 // It owns provider-specific HTTP, timeout, and error mapping so the AI
 // service can be switched to another provider without changing routes or
-// business rules. The API key remains server-side in env.AI_API_KEY.
+// business rules. The API key remains server-side in env.GEMINI_API_KEY.
 // ============================================================
-
-import crypto from 'node:crypto';
 
 import { env, isAiConfigured } from '../../../config/env.js';
 import { AppError } from '../../../utils/AppError.js';
 
-// Responses API endpoint used for one-shot, structured draft generation.
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+function toGeminiSchema(schema) {
+  const converted = { type: schema.type.toUpperCase() };
+  if (schema.required) converted.required = schema.required;
+  if (schema.properties) {
+    converted.properties = Object.fromEntries(
+      Object.entries(schema.properties).map(([key, value]) => [key, toGeminiSchema(value)])
+    );
+  }
+  if (schema.enum) converted.enum = schema.enum;
+  return converted;
+}
 
 /**
  * Sends the constrained request and returns parsed JSON only.
  * `instructions`, `input`, and `schema` are assembled by the provider-neutral
  * service; `userId` is hashed before it becomes a provider safety identifier.
  */
-export async function generateStructuredContent({ instructions, input, schema, userId }) {
+export async function generateStructuredContent({ instructions, input, schema }) {
   // The optional environment setting allows every non-AI PingOne feature to
   // boot without a provider account, while making this endpoint fail clearly.
   if (!isAiConfigured) {
@@ -32,28 +41,20 @@ export async function generateStructuredContent({ instructions, input, schema, u
   const startedAt = Date.now();
 
   try {
-    const response = await fetch(OPENAI_RESPONSES_URL, {
+    const response = await fetch(`${GEMINI_API_URL}/${encodeURIComponent(env.AI_MODEL)}:generateContent`, {
       method: 'POST',
       signal: controller.signal,
       headers: {
-        // The secret is sent only to the provider and is never logged/returned.
-        Authorization: `Bearer ${env.AI_API_KEY}`,
+        'x-goog-api-key': env.GEMINI_API_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: env.AI_MODEL,
-        instructions,
-        input,
-        // Do not retain this interactive draft as a provider-side response.
-        store: false,
-        // Cap completion size for predictable latency and token cost.
-        max_output_tokens: 700,
-        // A stable one-way hash supports provider safety monitoring without
-        // disclosing PingOne's raw internal user id.
-        safety_identifier: crypto.createHash('sha256').update(String(userId)).digest('hex'),
-        text: {
-          // Force machine-readable output that matches the requested type.
-          format: { type: 'json_schema', name: 'pingone_content', strict: true, schema },
+        systemInstruction: { parts: [{ text: instructions }] },
+        contents: [{ role: 'user', parts: [{ text: input }] }],
+        generationConfig: {
+          maxOutputTokens: 700,
+          responseMimeType: 'application/json',
+          responseSchema: toGeminiSchema(schema),
         },
       }),
     });
@@ -65,6 +66,16 @@ export async function generateStructuredContent({ instructions, input, schema, u
           code: 'AI_PROVIDER_RATE_LIMITED',
         });
       }
+      if (response.status === 401 || response.status === 403) {
+        throw new AppError(502, 'The configured Gemini API key was rejected.', {
+          code: 'AI_PROVIDER_AUTH_ERROR',
+        });
+      }
+      if (response.status === 404) {
+        throw new AppError(502, 'The configured Gemini model is unavailable.', {
+          code: 'AI_MODEL_UNAVAILABLE',
+        });
+      }
       throw new AppError(502, 'AI content generation is temporarily unavailable', {
         code: 'AI_PROVIDER_ERROR',
       });
@@ -72,12 +83,13 @@ export async function generateStructuredContent({ instructions, input, schema, u
 
     // A successful HTTP status can still represent an incomplete AI response.
     const payload = await response.json();
-    if (payload.status !== 'completed' || typeof payload.output_text !== 'string') {
+    const outputText = payload.candidates?.[0]?.content?.parts?.find((part) => typeof part.text === 'string')?.text;
+    if (typeof outputText !== 'string') {
       throw new AppError(502, 'AI returned an incomplete response', { code: 'AI_MALFORMED_RESPONSE' });
     }
 
     try {
-      return JSON.parse(payload.output_text);
+      return JSON.parse(outputText);
     } catch {
       throw new AppError(502, 'AI returned an invalid response', { code: 'AI_MALFORMED_RESPONSE' });
     }
@@ -94,6 +106,6 @@ export async function generateStructuredContent({ instructions, input, schema, u
     clearTimeout(timeout);
     // The timing log helps monitor the provider without exposing prompt text,
     // response text, API keys, or provider error bodies.
-    console.info(`[ai] provider=openai latency_ms=${Date.now() - startedAt}`);
+    console.info(`[ai] provider=gemini latency_ms=${Date.now() - startedAt}`);
   }
 }

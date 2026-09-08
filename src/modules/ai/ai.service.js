@@ -92,11 +92,10 @@ function buildInstructions(type) {
 
 /**
  * Generates one previewable draft for the authenticated user.
- * @param {number|string} userId trusted id supplied by authenticate middleware
  * @param {object} request already parsed by generateAiSchema
  * @returns {Promise<{type: 'message', content: string}|{type: 'email', subject: string, content: string}>}
  */
-export async function generateAiContent(userId, request) {
+export async function generateAiContent(request) {
   assertSupportedAiTask(request);
   // Serialize all user fields as data so they are clearly distinct from the
   // fixed provider instructions. Defaults give consistent output when optional
@@ -113,7 +112,7 @@ export async function generateAiContent(userId, request) {
     },
   };
   const raw = await generateStructuredContent({
-    instructions: buildInstructions(request.type), input: JSON.stringify(input), schema: outputJsonSchema(request.type), userId,
+    instructions: buildInstructions(request.type), input: JSON.stringify(input), schema: outputJsonSchema(request.type),
   });
   // Never trust external AI output merely because Structured Outputs was asked
   // for: validate it again at the application boundary.

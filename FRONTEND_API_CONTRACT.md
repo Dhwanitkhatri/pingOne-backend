@@ -9,6 +9,42 @@ Every payload the backend sends to the client, endpoint by endpoint.
 
 > ⚠️ **Response envelopes are not uniform.** Some endpoints return `{ data }`, some return a named key (`{ schedules }`, `{ templates }`, `{ credential }`), some return the object flat. Each section below states which. Do not assume `.data`.
 
+## AI Content Assistant
+
+### `POST /ai/generate`
+
+Requires an access token. The endpoint creates preview text only; it does not
+save, send, or schedule a message.
+
+Request body:
+
+```json
+{
+  "operation": "generate",
+  "type": "message",
+  "prompt": "Create a reminder for tomorrow's meeting"
+}
+```
+
+The backend also accepts optional `tone`, `language`, `length`, `platform`,
+`purpose`, and `audience` controls. `prompt` is limited to 2,000 characters.
+
+Successful response:
+
+```json
+{
+  "success": true,
+  "result": {
+    "type": "message",
+    "content": "..."
+  }
+}
+```
+
+AI-specific error codes include `AI_NOT_CONFIGURED`, `AI_TIMEOUT`,
+`AI_PROVIDER_AUTH_ERROR`, `AI_MODEL_UNAVAILABLE`, `AI_PROVIDER_ERROR`,
+`AI_PROVIDER_RATE_LIMITED`, and `AI_MALFORMED_RESPONSE`.
+
 ---
 
 ## 0. Global shapes

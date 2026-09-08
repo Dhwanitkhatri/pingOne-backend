@@ -184,7 +184,7 @@ const envSchema = z.object({
   // The AI endpoint remains unavailable until a server-only API key is set.
   // Keeping this optional lets local development and all non-AI features boot
   // normally without an AI provider account.
-  AI_API_KEY: optional(z.string().trim().min(1).optional()),
+  GEMINI_API_KEY: optional(z.string().trim().min(1).optional()),
   // `optional` turns AI_MODEL= into undefined, so blank and missing values
   // both safely use the default rather than making an invalid provider call.
   AI_MODEL: optional(z.string().trim().min(1).optional()).default('gpt-5-mini'),

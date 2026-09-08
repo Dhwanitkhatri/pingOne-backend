@@ -13,7 +13,7 @@ export const generate = asyncHandler(async (req, res) => {
   // omitted to avoid recording potentially sensitive user text.
   const startedAt = Date.now();
   try {
-    const result = await generateAiContent(req.user.id, req.body);
+    const result = await generateAiContent(req.body);
     // req.user comes solely from the JWT middleware, never from client input.
     console.info(`[ai] user_id=${req.user.id} operation=${req.body.operation} outcome=success latency_ms=${Date.now() - startedAt}`);
     res.status(200).json({ success: true, result });

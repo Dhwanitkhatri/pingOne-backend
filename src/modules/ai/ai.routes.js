@@ -27,6 +27,13 @@ const aiLimiter = rateLimit({
 
 // Middleware order is security-significant: authenticate first, then apply
 // the cost guard and schema validation, and finally invoke the thin controller.
-router.post('/generate', authenticate, aiLimiter, validate({ body: generateAiSchema }), aiController.generate);
+// Keep the older descriptive path as an alias for existing clients.
+router.post(
+  ['/generate', '/generate-message'],
+  authenticate,
+  aiLimiter,
+  validate({ body: generateAiSchema }),
+  aiController.generate
+);
 
 export default router;
