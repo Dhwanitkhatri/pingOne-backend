@@ -22,7 +22,6 @@ import { startDeliveryWorker } from './workers/delivery.worker.js';
 import { startRetryWorker } from './workers/retry.worker.js';
 import { connection } from './queue/bull.queue.js';
 import { workerManager } from './utils/worker-manager.js';
-import { authenticate } from './middleware/authenticate.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { verifyMailer } from './utils/mailer.js';
 import workerHealthRoutes from './modules/worker-health/worker-health.routes.js';
@@ -53,9 +52,19 @@ async function startWorkers() {
   app.use(express.json());
 
   // Mount health check routes (with auth)
-  app.use('/worker-health', authenticate, workerHealthRoutes);
+  app.use('/worker-health', workerHealthRoutes);
 
   // Unauthenticated liveness/readiness for container orchestration
+  app.get('/health', async (req, res) => {
+    const health = await workerManager.getHealth();
+    const isHealthy = health.isHealthy && !health.isShuttingDown;
+    res.status(isHealthy ? 200 : 503).json({
+      status: isHealthy ? 'ok' : 'degraded',
+      service: 'pingone-worker',
+      workers: health.summary,
+    });
+  });
+
   app.get('/health/live', async (req, res) => {
     const health = await workerManager.getHealth();
     const isAlive = health.summary.activeWorkers > 0 && !health.isShuttingDown;
