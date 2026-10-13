@@ -17,7 +17,11 @@ export const whatsappSchema = z.object({
     .string()
     .trim()
     .regex(/^\d+$/, 'phoneNumberId must be numeric (from Meta / WhatsApp Cloud API)'),
-  businessAccountId: z.string().trim().min(1).optional(),
+  businessAccountId: z
+    .string()
+    .trim()
+    .regex(/^\d+$/, 'businessAccountId must be the numeric WhatsApp Business Account ID')
+    .optional(),
 });
 
 // Telegram Bot API: the bot token issued by @BotFather, e.g. 123456789:AA...

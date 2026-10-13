@@ -76,9 +76,12 @@ const envSchema = z.object({
   META_APP_ID: optional(z.string().trim().min(1).optional()),
   META_APP_SECRET: optional(z.string().trim().min(1).optional()),
   META_REDIRECT_URI: optional(z.string().url().optional()),
-  META_API_VERSION: z.string().trim().default('v21.0'),
+  META_API_VERSION: z.string().trim().default('v26.0'),
   // Embedded-signup configuration id (Meta "config_id"), if you use one.
   META_CONFIG_ID: z.string().trim().min(1).optional(),
+  // Optional single-WABA fallback for local/manual credentials when Meta
+  // OAuth cannot discover a WABA. Per-user credentials remain stored encrypted.
+  META_WABA_ID: optional(z.string().trim().regex(/^\d+$/, 'META_WABA_ID must be numeric').optional()),
 
   // ---- Twilio Connect (optional) ----------------------------------
   // Twilio Connect is Twilio's authorization flow: the user approves our

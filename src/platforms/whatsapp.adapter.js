@@ -1,16 +1,9 @@
 // ============================================================
 // WhatsApp adapter — Meta WhatsApp Cloud API.
 //
-// IMPORTANT LIMITATION (flag this in your report, decide it up front):
-// Business-initiated messages OUTSIDE a 24h customer-service window
-// require a pre-approved message TEMPLATE (Meta reviews and approves
-// these) — you cannot send arbitrary free text cold. For the capstone
-// demo, either:
-//   (a) get one template approved in the Meta dev console and map your
-//       PingOne `Template` rows 1:1 to approved WhatsApp template names, or
-//   (b) only demo WhatsApp sends within a 24h window (reply to a message
-//       the test number sent your business number first).
-// This adapter implements the free-text path (option b / dev/test mode).
+// Outside the customer-service window, business-initiated messages need a
+// Meta-approved WhatsApp template. The composer can list approved text
+// templates from the user's WABA and sends them through the template API.
 //
 // Attachments go through Meta's two-step media flow: upload the bytes to
 // /{phone-number-id}/media, then send a message referencing the returned media
@@ -33,6 +26,7 @@ const DEFAULT_MEDIA_TYPE = 'document';
 
 // Meta's caption limit for media messages.
 const CAPTION_LIMIT = 1024;
+const TEMPLATE_MARKER = '__PINGONE_WHATSAPP_TEMPLATE_V1__:';
 
 export class WhatsAppAdapter extends BaseAdapter {
   static code = 'whatsapp';
@@ -58,6 +52,17 @@ export class WhatsAppAdapter extends BaseAdapter {
   }
 
   formatMessage(content, attachments = []) {
+    if (content.startsWith(TEMPLATE_MARKER)) {
+      let template;
+      try {
+        template = JSON.parse(Buffer.from(content.slice(TEMPLATE_MARKER.length), 'base64url').toString('utf8'));
+      } catch {
+        throw AppError.badRequest('WhatsApp template data is invalid. Select the template again.', {
+          code: 'INVALID_WHATSAPP_TEMPLATE',
+        });
+      }
+      return { formatted: template.preview ?? template.name, template, hasAttachments: attachments.length > 0, attachments };
+    }
     // WhatsApp free-text messages are plain (no HTML).
     return { formatted: content, hasAttachments: attachments.length > 0, attachments };
   }
@@ -66,6 +71,47 @@ export class WhatsAppAdapter extends BaseAdapter {
     const phoneNumberId = extraInfo?.phone_number_id;
     const attachments = message.attachments ?? [];
     const ctx = { accessToken, phoneNumberId, to: recipient.handle };
+
+    if (message.template) {
+      if (attachments.length) {
+        throw AppError.badRequest('Attachments are not supported with WhatsApp template messages.', {
+          code: 'WHATSAPP_TEMPLATE_ATTACHMENTS_UNSUPPORTED',
+        });
+      }
+      const { name, language, parameters = [] } = message.template;
+      if (!name || !language || !Array.isArray(parameters)) {
+        throw AppError.badRequest('WhatsApp template name, language, and parameters are required.', {
+          code: 'INVALID_WHATSAPP_TEMPLATE',
+        });
+      }
+      const components = parameters.length
+        ? [{
+            type: 'body',
+            parameters: parameters.map((text) => ({ type: 'text', text: String(text) })),
+          }]
+        : undefined;
+      const data = await this.#post(ctx, {
+        messaging_product: 'whatsapp',
+        to: ctx.to,
+        type: 'template',
+        template: {
+          name,
+          language: { code: language },
+          ...(components ? { components } : {}),
+        },
+      });
+      return { platformMessageId: data.messages?.[0]?.id, raw: data };
+    }
+
+    // The marker is storage metadata, never user-facing text. If a stale or
+    // mismatched worker reaches the plain-text path with it, fail closed so
+    // it cannot be delivered to the recipient as a WhatsApp message.
+    if (typeof message.formatted === 'string' && message.formatted.includes(TEMPLATE_MARKER)) {
+      throw AppError.badRequest(
+        'WhatsApp template data was not decoded. Restart the PingOne worker and select the template again.',
+        { code: 'WHATSAPP_TEMPLATE_NOT_DECODED' }
+      );
+    }
 
     // Single short attachment: one captioned media message rather than two
     // separate notifications.

@@ -1,7 +1,7 @@
 // ============================================================
 // SMS adapter — Twilio REST API directly (Basic Auth), no `twilio`
-// SDK dependency needed. Requires a paid/trial Twilio number; trial
-// accounts can only send to verified numbers, fine for a demo.
+// SDK dependency needed. Trial accounts require a verified recipient and a
+// predefined trial-template key as Body (the composer provides those keys).
 // ============================================================
 
 import { BaseAdapter } from './base.adapter.js';

@@ -122,6 +122,7 @@ export async function connectWhatsApp(
   userId,
   { accessToken, phoneNumberId, businessAccountId, expiresAt }
 ) {
+  businessAccountId = businessAccountId ?? env.META_WABA_ID;
   const number = phoneNumberId ? await verifyWhatsAppNumber(accessToken, phoneNumberId) : {};
 
   return connect({
@@ -160,6 +161,51 @@ async function verifyWhatsAppNumber(accessToken, phoneNumberId) {
     }
     throw err;
   });
+}
+
+/** List the connected user's approved WhatsApp message templates. */
+export async function listWhatsAppTemplates(userId) {
+  const { secret: accessToken, extraInfo } = await getDecryptedCredential(userId, 'whatsapp');
+  const businessAccountId = extraInfo.business_account_id ?? env.META_WABA_ID;
+  if (!businessAccountId) {
+    throw AppError.badRequest(
+      'WhatsApp Business Account ID is missing. Set META_WABA_ID in pingOne-backend/.env and restart the backend, or reconnect WhatsApp with its WABA ID.',
+      { code: 'WHATSAPP_WABA_ID_MISSING' }
+    );
+  }
+
+  const url = `https://graph.facebook.com/${env.META_API_VERSION}/${businessAccountId}/message_templates?${new URLSearchParams({
+    fields: 'name,language,status,category,components',
+    limit: '100',
+  })}`;
+  const response = await fetchJson(url, {
+    provider: 'Meta',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  return (response.data ?? [])
+    .filter((template) => {
+      if (template.status !== 'APPROVED') return false;
+      const header = template.components?.find((component) => component.type === 'HEADER');
+      const body = template.components?.find((component) => component.type === 'BODY');
+      const variables = body?.text?.match(/{{\s*([^{}]+?)\s*}}/g) ?? [];
+      const positions = [...new Set(variables.map((variable) => Number(variable.match(/\d+/)?.[0])))].sort((a, b) => a - b);
+      // This first dashboard version supports text body parameters, but not
+      // media/dynamic headers, named parameters, or interactive button params.
+      return Boolean(body?.text) &&
+        (!header || (header.format === 'TEXT' && !/{{\s*[^{}]+?\s*}}/.test(header.text ?? ''))) &&
+        variables.every((variable) => /^{{\s*\d+\s*}}$/.test(variable)) &&
+        positions.every((position, index) => position === index + 1) &&
+        !template.components?.some((component) => component.type === 'BUTTONS');
+    })
+    .map(({ name, language, category, components = [] }) => ({
+      name,
+      language,
+      category,
+      components: components
+        .filter((component) => ['HEADER', 'BODY'].includes(component.type))
+        .map(({ type, format, text }) => ({ type, format, text })),
+    }));
 }
 
 /**

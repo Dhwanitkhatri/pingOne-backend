@@ -17,6 +17,11 @@ export const addWhatsApp = asyncHandler(async (req, res) => {
   res.status(200).json({ message: 'WhatsApp account connected', credential });
 });
 
+export const whatsappTemplates = asyncHandler(async (req, res) => {
+  const templates = await service.listWhatsAppTemplates(req.user.id);
+  res.status(200).json({ data: templates });
+});
+
 export const addTelegram = asyncHandler(async (req, res) => {
   const credential = await service.connectTelegram(req.user.id, req.body);
   res.status(200).json({ message: 'Telegram bot connected', credential });

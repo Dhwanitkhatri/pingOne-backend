@@ -37,6 +37,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', controller.list);
+router.get('/whatsapp/templates', controller.whatsappTemplates);
 
 router.post('/whatsapp', validate({ body: whatsappSchema }), controller.addWhatsApp);
 router.post('/telegram', validate({ body: telegramSchema }), controller.addTelegram);
