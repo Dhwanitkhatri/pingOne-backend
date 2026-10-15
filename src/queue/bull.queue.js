@@ -52,6 +52,18 @@ export function attachErrorLogging(emitter, label) {
 // BullMQ requires maxRetriesPerRequest: null on the shared connection.
 export const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
+// REDIS_URL carries the password for hosted Redis (rediss://default:<pw>@host).
+// Logs end up in places a secret must not (hosting dashboards, shared
+// terminals), so only host and port are ever printed.
+export const redisLabel = (() => {
+  try {
+    const url = new URL(env.REDIS_URL);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return 'the configured REDIS_URL';
+  }
+})();
+
 // ioredis retries forever by default, which is what we want — a brief Redis blip
 // shouldn't kill the worker. This just makes the first failure actionable.
 let bootErrorLogged = false;
@@ -59,14 +71,14 @@ connection.on('error', (err) => {
   if (bootErrorLogged) return;
   bootErrorLogged = true;
   console.error(
-    `[queue] cannot reach Redis at ${env.REDIS_URL} (${err.code ?? err.message}).\n` +
+    `[queue] cannot reach Redis at ${redisLabel} (${err.code ?? err.message}).\n` +
       '        Start Redis (e.g. `docker run -p 6379:6379 redis`) or set REDIS_URL.\n' +
       '        Scheduling and delivery stay paused until it connects; retrying in the background.'
   );
 });
 connection.on('ready', () => {
   bootErrorLogged = false;
-  console.log(`[queue] connected to Redis at ${env.REDIS_URL}`);
+  console.log(`[queue] connected to Redis at ${redisLabel}`);
 });
 
 export const QUEUE_NAMES = Object.freeze({

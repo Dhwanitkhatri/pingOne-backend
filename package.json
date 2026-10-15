@@ -21,7 +21,12 @@
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
-    "setup": "prisma generate && prisma migrate dev --name init && npm run db:constraints && npm run db:seed"
+    "setup": "prisma generate && prisma migrate dev --name init && npm run db:constraints && npm run db:seed",
+    "test:api": "node tests/api.e2e.mjs",
+    "test:api:quick": "node tests/api.e2e.mjs --quick",
+    "test:ui": "node tests/ui.e2e.mjs",
+    "test:report": "node tests/make-report.mjs",
+    "test:cleanup": "node tests/api.e2e.mjs --cleanup-only"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -60,6 +65,13 @@
     "@eslint/js": "^10.0.1",
     "eslint": "^10.9.1",
     "globals": "^17.12.0",
-    "nodemon": "^3.1.7"
+    "nodemon": "^3.1.7",
+    "puppeteer-core": "^23.11.1"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "tests/*",
+      "uploads/*"
+    ]
   }
 }

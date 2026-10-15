@@ -10,6 +10,24 @@ import { AppError } from '../../../utils/AppError.js';
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+// Gemini answers 503 "model is experiencing high demand" during load spikes
+// that usually clear within seconds. Retrying those (and other transient
+// 5xx) briefly turns a user-facing error into a slightly slower success.
+// The waits stay inside the AI_TIMEOUT_MS abort, so the overall bound on a
+// request is unchanged. 429 is not retried: it means the quota is spent.
+const TRANSIENT_STATUSES = new Set([500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [1000, 2000];
+
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+    }, { once: true });
+  });
+}
+
 function toGeminiSchema(schema) {
   const converted = { type: schema.type.toUpperCase() };
   if (schema.required) converted.required = schema.required;
@@ -41,23 +59,30 @@ export async function generateStructuredContent({ instructions, input, schema })
   const startedAt = Date.now();
 
   try {
-    const response = await fetch(`${GEMINI_API_URL}/${encodeURIComponent(env.AI_MODEL)}:generateContent`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'x-goog-api-key': env.GEMINI_API_KEY,
-        'Content-Type': 'application/json',
+    const body = JSON.stringify({
+      systemInstruction: { parts: [{ text: instructions }] },
+      contents: [{ role: 'user', parts: [{ text: input }] }],
+      generationConfig: {
+        maxOutputTokens: 700,
+        responseMimeType: 'application/json',
+        responseSchema: toGeminiSchema(schema),
       },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: instructions }] },
-        contents: [{ role: 'user', parts: [{ text: input }] }],
-        generationConfig: {
-          maxOutputTokens: 700,
-          responseMimeType: 'application/json',
-          responseSchema: toGeminiSchema(schema),
-        },
-      }),
     });
+
+    let response;
+    for (let attempt = 0; ; attempt += 1) {
+      response = await fetch(`${GEMINI_API_URL}/${encodeURIComponent(env.AI_MODEL)}:generateContent`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'x-goog-api-key': env.GEMINI_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body,
+      });
+      if (!TRANSIENT_STATUSES.has(response.status) || attempt >= RETRY_DELAYS_MS.length) break;
+      await wait(RETRY_DELAYS_MS[attempt], controller.signal);
+    }
 
     if (!response.ok) {
       // Do not surface provider bodies: they can include operational details.

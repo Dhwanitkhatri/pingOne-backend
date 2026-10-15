@@ -19,7 +19,11 @@ const PROMPT_INJECTION_RE = /\b(ignore|disregard|override|forget)\b[^\n]{0,120}\
 // Direct non-communication output requests are unsupported unless the same
 // prompt clearly says the output itself is a message or email about that topic.
 const UNSUPPORTED_OUTPUT_RE = /\b(write|generate|create|build|explain|answer|help(?: me)?|how do i)\b[^\n]{0,120}\b(code|program|script|react(?: application| app)?|node(?:\.js)?|javascript|typescript|python|sql|database|api|website|application|essay|research paper)\b/i;
-const COMMUNICATION_CONTEXT_RE = /\b(message|email|sms|whatsapp|telegram|reminder|reply|subject|client|customer|recipient|appointment|invite|invitation|audience|greeting|birthday|wish|congratulat(?:e|ion)|thank(?: you)?|apolog(?:y|ize)|announcement|follow[ -]?up|note)\b/i;
+// Covers how people actually phrase a messaging request: the verb ("remind",
+// "notify", "announce"), plural audiences ("customers", "students") and group
+// nouns ("team", "staff"). A list of only singular nouns rejected everyday
+// prompts such as "Remind the team about tomorrow's standup".
+const COMMUNICATION_CONTEXT_RE = /\b(messages?|emails?|sms|whatsapp|telegram|remind(?:er|ers|ing)?|repl(?:y|ies)|subject|clients?|customers?|recipients?|appointments?|invites?|invitations?|audience|greetings?|birthday|wish(?:es)?|congratulat(?:e|ion|ions)|thank(?:s| you)?|apolog(?:y|ise|ize)|announce(?:ment|ments)?|follow[ -]?up|notes?|notify|notification|inform|welcome|confirm(?:ation)?|meeting|team|staff|employees|colleagues|everyone|members|students|parents|guests)\b/i;
 
 // New drafts need an explicit communication purpose. Editing operations are
 // already constrained by their operation and required existing content, so

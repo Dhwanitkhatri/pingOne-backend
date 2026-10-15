@@ -4,10 +4,9 @@
 // deliveryQueue/retryQueue directly. Keeps job-shape in one place.
 // ============================================================
 
-import { deliveryQueue, retryQueue, connection } from './bull.queue.js';
+import { deliveryQueue, retryQueue, connection, redisLabel } from './bull.queue.js';
 import { RETRY_BACKOFF_MS, MAX_RETRY_ATTEMPTS, JOB_PRIORITY } from '../constants/codes.js';
 import { AppError } from '../utils/AppError.js';
-import { env } from '../config/env.js';
 
 const PING_TIMEOUT_MS = 2_000;
 
@@ -34,7 +33,7 @@ export async function assertQueueReachable() {
   } catch {
     throw new AppError(
       503,
-      `Can't reach the delivery queue at ${env.REDIS_URL}. Start Redis (e.g. ` +
+      `Can't reach the delivery queue at ${redisLabel}. Start Redis (e.g. ` +
         '`docker run -p 6379:6379 redis`) — or schedule the message for later ' +
         'instead, which only needs the database.',
       { code: 'QUEUE_UNAVAILABLE' }

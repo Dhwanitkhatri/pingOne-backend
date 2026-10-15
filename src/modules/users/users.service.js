@@ -10,6 +10,8 @@
 import { prisma } from '../../config/prisma.js';
 import { hashPassword, verifyPassword } from '../../utils/password.js';
 import { AppError } from '../../utils/AppError.js';
+import { lookupByCode } from '../../utils/lookupCache.js';
+import { MESSAGE_STATUS } from '../../constants/codes.js';
 
 // Fields safe to return to the client (never the password hash).
 const publicUserSelect = {
@@ -127,7 +129,12 @@ export async function changePassword(userId, { currentPassword, newPassword }) {
  *
  * Re-authenticates with the password, then soft-deletes the user
  * (sets deletedAt + isActive=false), disconnects every platform
- * credential, and revokes all sessions.
+ * credential, cancels every pending scheduled job, and revokes all sessions.
+ *
+ * Cancelling matters because the scheduler fires any pending job that is
+ * due without looking at its owner: a closed account's recurring job would
+ * otherwise keep firing forever, each run failing (the credentials are gone)
+ * and retrying.
  */
 export async function deleteAccount(userId, { password }) {
   const user = await prisma.user.findUnique({
@@ -147,8 +154,17 @@ export async function deleteAccount(userId, { password }) {
   }
 
   const now = new Date();
+  const [pending, cancelled] = await Promise.all([
+    lookupByCode('messageStatus', MESSAGE_STATUS.PENDING),
+    lookupByCode('messageStatus', MESSAGE_STATUS.CANCELLED),
+  ]);
 
   await prisma.$transaction([
+    // Stop every job that hasn't finished, recurring ones included.
+    prisma.scheduledJob.updateMany({
+      where: { userId, statusId: pending.id },
+      data: { statusId: cancelled.id, nextRunAt: null },
+    }),
     // Soft-delete the user.
     prisma.user.update({
       where: { id: userId },

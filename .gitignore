@@ -31,3 +31,6 @@ coverage/
 # so a fresh clone can serve /uploads before the first upload creates it.
 uploads/*
 !uploads/.gitkeep
+
+# Test run output (regenerated on every run)
+tests/results/

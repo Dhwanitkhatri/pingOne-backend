@@ -115,8 +115,13 @@ async function startWorkers() {
 
 /**
  * Graceful shutdown handler. Ensures all in-flight jobs complete before exit.
+ *
+ * @param {number} [exitCode=0] 0 for a requested stop (SIGINT/SIGTERM), 1 when
+ *   shutting down because of a crash. A crash must not exit 0: nodemon, Render
+ *   and other supervisors read 0 as "stopped on purpose", so the worker would
+ *   vanish silently and every delivery, retry and scheduled job would stall.
  */
-async function gracefulShutdown(server) {
+async function gracefulShutdown(server, exitCode = 0) {
   if (isShuttingDown) {
     console.warn('⚠️  Shutdown already in progress, ignoring signal');
     return;
@@ -147,7 +152,7 @@ async function gracefulShutdown(server) {
     await workerManager.gracefulShutdown(connection);
 
     console.log('✅ Worker process shut down gracefully');
-    process.exit(0);
+    process.exit(exitCode);
   } catch (err) {
     console.error('❌ Error during graceful shutdown:', err);
     process.exit(1);
@@ -159,13 +164,13 @@ async function gracefulShutdown(server) {
  */
 async function main() {
   // Register error handlers FIRST before starting workers
-  const handleShutdown = (server) => {
+  const handleShutdown = (server, exitCode = 0) => {
     if (isShuttingDown) {
       console.warn('⚠️  Shutdown already in progress, ignoring signal');
       return;
     }
     console.log(`\n📨 Received signal, initiating graceful shutdown...`);
-    gracefulShutdown(server);
+    gracefulShutdown(server, exitCode);
   };
 
   // Handle graceful shutdown on signals
@@ -178,12 +183,12 @@ async function main() {
   process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught exception:', err);
     // Don't exit immediately; let graceful shutdown handle cleanup
-    handleShutdown(server);
+    handleShutdown(server, 1);
   });
 
   process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ Unhandled rejection at promise:', promise, 'reason:', reason);
-    handleShutdown(server);
+    handleShutdown(server, 1);
   });
 
   // Now start workers
