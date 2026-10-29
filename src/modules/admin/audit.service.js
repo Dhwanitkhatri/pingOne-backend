@@ -23,6 +23,9 @@ export const AUDIT_ACTION = Object.freeze({
   USER_REACTIVATE: 'user.reactivate',
   USER_ROLE_CHANGE: 'user.role_change',
   USER_DELETE: 'user.delete',
+  MESSAGE_RETRY: 'message.retry',
+  PLATFORM_ENABLE: 'platform.enable',
+  PLATFORM_DISABLE: 'platform.disable',
 });
 
 /**
@@ -100,6 +103,7 @@ export async function list({ limit = 25, cursor, action, adminId } = {}) {
       },
       metadata: row.metadata,
       ipAddress: row.ipAddress,
+      userAgent: row.userAgent,
       createdAt: row.createdAt,
     })),
     nextCursor: hasMore ? page[page.length - 1].id : null,

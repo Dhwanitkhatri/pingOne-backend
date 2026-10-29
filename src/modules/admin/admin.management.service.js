@@ -3,14 +3,24 @@
 // All operations are PLATFORM-WIDE and must run behind requireAdmin / requireSuperAdmin.
 // ============================================================
 
-import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
-import { MESSAGE_STATUS, SUCCESS_STATUSES } from '../../constants/codes.js';
+import { env } from '../../config/env.js';
+import {
+  CHANGED_BY,
+  MAX_RETRY_ATTEMPTS,
+  MESSAGE_STATUS,
+  RETRY_BACKOFF_MS,
+} from '../../constants/codes.js';
+import { transitionStatus } from '../deliveries/delivery-status.service.js';
+import { assertQueueReachable, enqueueDelivery } from '../../queue/queue.service.js';
 import * as audit from './audit.service.js';
 import { AUDIT_ACTION } from './audit.service.js';
 import { AppError } from '../../utils/AppError.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Admin login throttle — applied in admin.routes.js, reported by getSystemSettings. */
+export const ADMIN_LOGIN_LIMIT = Object.freeze({ max: 10, windowMinutes: 15 });
 
 /* ── 1. Users Management ─────────────────────────────────────────────── */
 
@@ -315,7 +325,7 @@ export async function listMessages({
       SELECT
         COUNT(*)::int AS total_all,
         COUNT(*) FILTER (WHERE s.code IN ('sent', 'delivered', 'read'))::int AS sent_count,
-        COUNT(*) FILTER (WHERE s.code = 'delivered')::int AS delivered_count,
+        COUNT(*) FILTER (WHERE s.code IN ('delivered', 'read'))::int AS delivered_count,
         COUNT(*) FILTER (WHERE s.code = 'failed')::int AS failed_count,
         COUNT(*) FILTER (WHERE s.code IN ('pending', 'sending'))::int AS pending_count
       FROM message_deliveries d
@@ -348,6 +358,17 @@ export async function listMessages({
   };
 }
 
+/**
+ * Manually re-queue a failed delivery.
+ *
+ * Only `failed` is retryable. A `pending`/`sending` row is already on the
+ * queue, and re-queueing a `sent`/`delivered`/`read` one would message the
+ * recipient twice — the worker's own guard only covers the confirmed states.
+ *
+ * The retry count is reset so the re-queued attempt gets the full automatic
+ * backoff ladder again; a manual retry is a fresh start, not attempt N+1 of a
+ * ladder that was already exhausted.
+ */
 export async function retryDelivery({ deliveryId, adminUser, sessionContext }) {
   const delivery = await prisma.messageDelivery.findUnique({
     where: { id: deliveryId },
@@ -358,35 +379,41 @@ export async function retryDelivery({ deliveryId, adminUser, sessionContext }) {
     throw AppError.notFound('Delivery record not found');
   }
 
-  const pendingStatus = await prisma.messageStatus.findUnique({
-    where: { code: MESSAGE_STATUS.PENDING },
-  });
-
-  if (!pendingStatus) {
-    throw AppError.internal('Pending status not configured');
+  if (delivery.status.code !== MESSAGE_STATUS.FAILED) {
+    throw AppError.badRequest(`Only failed deliveries can be retried (this one is ${delivery.status.code})`, {
+      code: 'DELIVERY_NOT_RETRYABLE',
+    });
   }
 
-  const updated = await prisma.messageDelivery.update({
-    where: { id: deliveryId },
-    data: {
-      statusId: pendingStatus.id,
-      errorReason: null,
-      retryCount: { increment: 1 },
-    },
-    include: {
-      status: true,
-      platform: true,
-    },
+  // Before touching the row — a delivery flipped to pending with no queue job
+  // behind it would sit there forever.
+  await assertQueueReachable();
+
+  // Through the status service, not a raw update, so delivery_status_logs
+  // records the failed -> pending move like every other transition.
+  const { delivery: updated } = await transitionStatus({
+    deliveryId,
+    toCode: MESSAGE_STATUS.PENDING,
+    changedBy: CHANGED_BY.USER,
+    errorReason: null,
+    force: true,
+    data: { retryCount: 0 },
   });
+
+  await enqueueDelivery(deliveryId, 'high');
 
   await audit.record(
     {
       adminId: adminUser.id,
-      action: 'message.retry',
+      action: AUDIT_ACTION.MESSAGE_RETRY,
       targetType: 'message',
       targetId: deliveryId,
       targetLabel: `Delivery #${deliveryId}`,
-      metadata: { previousStatus: delivery.status.code, retryCount: updated.retryCount },
+      metadata: {
+        previousStatus: delivery.status.code,
+        previousRetryCount: delivery.retryCount,
+        previousError: delivery.errorReason,
+      },
     },
     sessionContext
   );
@@ -404,10 +431,12 @@ export async function listPlatforms() {
     prisma.platform.findMany({
       orderBy: { id: 'asc' },
     }),
+    // COUNT(d.id), not COUNT(*): the LEFT JOIN yields one all-NULL row for a
+    // platform with no traffic, which COUNT(*) would report as 1 message.
     prisma.$queryRaw`
       SELECT
         p.code,
-        COUNT(*)::int AS total_24h,
+        COUNT(d.id)::int AS total_24h,
         COUNT(*) FILTER (WHERE s.code IN ('sent', 'delivered', 'read'))::int AS sent_24h,
         COUNT(*) FILTER (WHERE s.code = 'failed')::int AS failed_24h,
         MAX(d.created_at) AS last_delivery_at
@@ -468,7 +497,7 @@ export async function togglePlatform({ code, isActive, adminUser, sessionContext
   await audit.record(
     {
       adminId: adminUser.id,
-      action: isActive ? 'platform.enable' : 'platform.disable',
+      action: isActive ? AUDIT_ACTION.PLATFORM_ENABLE : AUDIT_ACTION.PLATFORM_DISABLE,
       targetType: 'platform',
       targetLabel: platform.name,
       metadata: { platformCode: code, isActive },
@@ -557,6 +586,24 @@ export async function getAnalytics({ days = 30 } = {}) {
   const totalFailed = volumeSeries.reduce((acc, row) => acc + (row.failed ?? 0), 0);
   const avgSuccessRate = totalDispatched > 0 ? Math.round((totalSent / totalDispatched) * 100) : 100;
 
+  // GROUP BY only returns days that had traffic. Zero-fill the rest so the
+  // chart's x axis is real calendar time — otherwise a quiet week collapses
+  // and the line draws a straight slope across days that never happened.
+  const byDay = new Map(volumeSeries.map((r) => [r.bucket.toISOString().slice(0, 10), r]));
+  const firstDay = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const filledSeries = [];
+  for (let t = firstDay.getTime(); t <= to.getTime(); t += DAY_MS) {
+    const day = new Date(t);
+    const row = byDay.get(day.toISOString().slice(0, 10));
+    filledSeries.push({
+      date: day.toISOString(),
+      label: day.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+      total: row?.total ?? 0,
+      sent: row?.sent ?? 0,
+      failed: row?.failed ?? 0,
+    });
+  }
+
   return {
     range: { days, from, to },
     summary: {
@@ -564,15 +611,10 @@ export async function getAnalytics({ days = 30 } = {}) {
       totalSent,
       totalFailed,
       avgSuccessRate,
-      dailyAverage: volumeSeries.length ? Math.round(totalDispatched / volumeSeries.length) : 0,
+      // Over the whole window, not just the days that had traffic.
+      dailyAverage: Math.round(totalDispatched / days),
     },
-    volumeSeries: volumeSeries.map((r) => ({
-      date: r.bucket.toISOString(),
-      label: new Date(r.bucket).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      total: r.total ?? 0,
-      sent: r.sent ?? 0,
-      failed: r.failed ?? 0,
-    })),
+    volumeSeries: filledSeries,
     hourlyDistribution: fullHourly,
     failureReasons,
     topSenders: topSenders.map((s) => ({
@@ -610,26 +652,30 @@ export async function getOperators() {
   return { operators };
 }
 
+/**
+ * Read-only runtime configuration for the Settings page.
+ *
+ * Every value here is read from the config that actually governs behaviour —
+ * env and constants/codes.js. A settings page that prints hard-coded numbers
+ * tells an operator something about the system that may simply be false.
+ */
 export async function getSystemSettings() {
   const memory = process.memoryUsage();
 
   return {
-    environment: process.env.NODE_ENV || 'development',
+    environment: env.NODE_ENV,
     nodeVersion: process.version,
     uptimeSeconds: Math.floor(process.uptime()),
     memoryUsageMb: Math.round(memory.heapUsed / 1024 / 1024),
     securityPolicies: {
-      sessionTimeoutMinutes: 60,
-      maxLoginAttempts: 10,
-      lockoutMinutes: 15,
-      requireEmailVerification: true,
-      corsOrigins: process.env.CORS_ORIGINS || 'http://localhost:5173',
+      accessTokenTtl: env.JWT_ACCESS_EXPIRES_IN,
+      refreshTokenTtl: env.JWT_REFRESH_EXPIRES_IN,
+      adminLoginMaxAttempts: ADMIN_LOGIN_LIMIT.max,
+      adminLoginWindowMinutes: ADMIN_LOGIN_LIMIT.windowMinutes,
     },
     deliveryPolicies: {
-      maxRetryAttempts: 3,
-      retryBackoffSeconds: 30,
-      batchSize: 50,
-      webhookTimeoutSeconds: 10,
+      maxRetryAttempts: MAX_RETRY_ATTEMPTS,
+      retryBackoffSeconds: RETRY_BACKOFF_MS.map((ms) => Math.round(ms / 1000)),
     },
   };
 }

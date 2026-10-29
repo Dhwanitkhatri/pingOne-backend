@@ -107,6 +107,13 @@ async function processDeliveryJob(job) {
   });
 
   try {
+    // An operator can switch a channel off platform-wide from the back
+    // office. Thrown inside the try so it takes the ordinary failure path:
+    // the backoff ladder leaves a window to re-enable before it's permanent.
+    if (!delivery.platform.isActive) {
+      throw new Error(`${delivery.platform.name} is disabled by an administrator`);
+    }
+
     const credential = await platformsService.getDecryptedCredential(
       delivery.job.userId,
       delivery.platform.code

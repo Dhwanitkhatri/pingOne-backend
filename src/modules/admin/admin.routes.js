@@ -34,9 +34,11 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 
 import * as adminController from './admin.controller.js';
+import { ADMIN_LOGIN_LIMIT } from './admin.management.service.js';
 import { validate } from '../../middleware/validate.js';
 import { authenticate, optionalAuthenticate } from '../../middleware/authenticate.js';
 import { requireAdmin, requireSuperAdmin } from '../../middleware/authorize.js';
+import { idParamSchema } from '../../utils/validators.js';
 import {
   adminLoginSchema,
   adminLogoutSchema,
@@ -62,8 +64,8 @@ const router = Router();
  * attempts in a quarter of an hour.
  */
 const adminLoginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
+  windowMs: ADMIN_LOGIN_LIMIT.windowMinutes * 60 * 1000,
+  max: ADMIN_LOGIN_LIMIT.max,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -129,13 +131,22 @@ router.get('/audit-log', validate({ query: auditQuerySchema }), adminController.
 
 /* ── Users Management ────────────────────────────────────────────────── */
 router.get('/users', validate({ query: usersQuerySchema }), adminController.getUsers);
-router.get('/users/:id', adminController.getUserDetails);
-router.patch('/users/:id/status', validate({ body: updateUserStatusSchema }), adminController.updateUserStatus);
-router.patch('/users/:id/role', requireSuperAdmin, validate({ body: updateUserRoleSchema }), adminController.updateUserRole);
+router.get('/users/:id', validate({ params: idParamSchema }), adminController.getUserDetails);
+router.patch(
+  '/users/:id/status',
+  validate({ params: idParamSchema, body: updateUserStatusSchema }),
+  adminController.updateUserStatus
+);
+router.patch(
+  '/users/:id/role',
+  requireSuperAdmin,
+  validate({ params: idParamSchema, body: updateUserRoleSchema }),
+  adminController.updateUserRole
+);
 
 /* ── Messages & Deliveries ───────────────────────────────────────────── */
 router.get('/messages', validate({ query: messagesQuerySchema }), adminController.getMessages);
-router.post('/messages/:id/retry', adminController.retryMessage);
+router.post('/messages/:id/retry', validate({ params: idParamSchema }), adminController.retryMessage);
 
 /* ── Platforms Management ────────────────────────────────────────────── */
 router.get('/platforms', adminController.getPlatforms);

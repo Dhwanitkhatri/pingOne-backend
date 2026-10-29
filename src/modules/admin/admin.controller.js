@@ -99,12 +99,12 @@ export const getUsers = asyncHandler(async (req, res) => {
 });
 
 export const getUserDetails = asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.id, 10);
+  const userId = req.params.id; // coerced by idParamSchema
   res.status(200).json(await mgmtService.getUserById(userId));
 });
 
 export const updateUserStatus = asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.id, 10);
+  const userId = req.params.id; // coerced by idParamSchema
   const result = await mgmtService.updateUserStatus({
     userId,
     isActive: req.body.isActive,
@@ -116,7 +116,7 @@ export const updateUserStatus = asyncHandler(async (req, res) => {
 });
 
 export const updateUserRole = asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.id, 10);
+  const userId = req.params.id; // coerced by idParamSchema
   const result = await mgmtService.updateUserRole({
     userId,
     role: req.body.role,
@@ -134,7 +134,7 @@ export const getMessages = asyncHandler(async (req, res) => {
 });
 
 export const retryMessage = asyncHandler(async (req, res) => {
-  const deliveryId = parseInt(req.params.id, 10);
+  const deliveryId = req.params.id; // coerced by idParamSchema
   const result = await mgmtService.retryDelivery({
     deliveryId,
     adminUser: req.user,
