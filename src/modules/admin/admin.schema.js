@@ -72,3 +72,43 @@ export const auditQuerySchema = z.object({
   action: z.string().trim().max(60).optional(),
   adminId: z.coerce.number().int().positive().optional(),
 });
+
+export const usersQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(15),
+  search: z.string().trim().max(100).optional(),
+  role: z.enum(['USER', 'ADMIN', 'SUPER_ADMIN']).optional(),
+  status: z.enum(['active', 'suspended', 'unverified']).optional(),
+  sortBy: z.enum(['createdAt', 'lastLoginAt', 'email', 'name']).default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
+export const updateUserStatusSchema = z.object({
+  isActive: z.boolean(),
+  reason: z.string().trim().max(255).optional(),
+});
+
+export const updateUserRoleSchema = z.object({
+  role: z.enum(['USER', 'ADMIN', 'SUPER_ADMIN']),
+  reason: z.string().trim().max(255).optional(),
+});
+
+export const messagesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(15),
+  search: z.string().trim().max(100).optional(),
+  platform: z.string().trim().max(30).optional(),
+  status: z.string().trim().max(30).optional(),
+  days: z.coerce.number().int().min(1).max(365).optional(),
+});
+
+export const platformToggleSchema = z.object({
+  isActive: z.boolean(),
+});
+
+export const analyticsQuerySchema = z.object({
+  days: z.coerce.number().int().refine((v) => [7, 30, 90].includes(v), {
+    message: 'days must be 7, 30, or 90',
+  }).default(30),
+});
+

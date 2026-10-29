@@ -84,8 +84,94 @@ export const systemHealth = asyncHandler(async (req, res) => {
   res.status(200).json(health);
 });
 
+import * as mgmtService from './admin.management.service.js';
+
 /* ── Audit trail ─────────────────────────────────────────────────────── */
 
 export const auditLog = asyncHandler(async (req, res) => {
   res.status(200).json(await audit.list(req.query));
 });
+
+/* ── Users Management ────────────────────────────────────────────────── */
+
+export const getUsers = asyncHandler(async (req, res) => {
+  res.status(200).json(await mgmtService.listUsers(req.query));
+});
+
+export const getUserDetails = asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  res.status(200).json(await mgmtService.getUserById(userId));
+});
+
+export const updateUserStatus = asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const result = await mgmtService.updateUserStatus({
+    userId,
+    isActive: req.body.isActive,
+    reason: req.body.reason,
+    adminUser: req.user,
+    sessionContext: sessionContext(req),
+  });
+  res.status(200).json(result);
+});
+
+export const updateUserRole = asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const result = await mgmtService.updateUserRole({
+    userId,
+    role: req.body.role,
+    reason: req.body.reason,
+    adminUser: req.user,
+    sessionContext: sessionContext(req),
+  });
+  res.status(200).json(result);
+});
+
+/* ── Messages & Delivery Monitoring ─────────────────────────────────── */
+
+export const getMessages = asyncHandler(async (req, res) => {
+  res.status(200).json(await mgmtService.listMessages(req.query));
+});
+
+export const retryMessage = asyncHandler(async (req, res) => {
+  const deliveryId = parseInt(req.params.id, 10);
+  const result = await mgmtService.retryDelivery({
+    deliveryId,
+    adminUser: req.user,
+    sessionContext: sessionContext(req),
+  });
+  res.status(200).json(result);
+});
+
+/* ── Platforms Management ────────────────────────────────────────────── */
+
+export const getPlatforms = asyncHandler(async (req, res) => {
+  res.status(200).json(await mgmtService.listPlatforms());
+});
+
+export const togglePlatform = asyncHandler(async (req, res) => {
+  const result = await mgmtService.togglePlatform({
+    code: req.params.code,
+    isActive: req.body.isActive,
+    adminUser: req.user,
+    sessionContext: sessionContext(req),
+  });
+  res.status(200).json(result);
+});
+
+/* ── Analytics & Reporting ───────────────────────────────────────────── */
+
+export const getAnalytics = asyncHandler(async (req, res) => {
+  res.status(200).json(await mgmtService.getAnalytics(req.query));
+});
+
+/* ── Settings & Operators ────────────────────────────────────────────── */
+
+export const getOperators = asyncHandler(async (req, res) => {
+  res.status(200).json(await mgmtService.getOperators());
+});
+
+export const getSettings = asyncHandler(async (req, res) => {
+  res.status(200).json(await mgmtService.getSystemSettings());
+});
+

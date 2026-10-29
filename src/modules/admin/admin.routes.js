@@ -36,7 +36,7 @@ import rateLimit from 'express-rate-limit';
 import * as adminController from './admin.controller.js';
 import { validate } from '../../middleware/validate.js';
 import { authenticate, optionalAuthenticate } from '../../middleware/authenticate.js';
-import { requireAdmin } from '../../middleware/authorize.js';
+import { requireAdmin, requireSuperAdmin } from '../../middleware/authorize.js';
 import {
   adminLoginSchema,
   adminLogoutSchema,
@@ -46,6 +46,12 @@ import {
   distributionQuerySchema,
   recentActivityQuerySchema,
   auditQuerySchema,
+  usersQuerySchema,
+  updateUserStatusSchema,
+  updateUserRoleSchema,
+  messagesQuerySchema,
+  platformToggleSchema,
+  analyticsQuerySchema,
 } from './admin.schema.js';
 
 const router = Router();
@@ -120,5 +126,26 @@ router.get(
 router.get('/dashboard/system-health', adminController.systemHealth);
 
 router.get('/audit-log', validate({ query: auditQuerySchema }), adminController.auditLog);
+
+/* ── Users Management ────────────────────────────────────────────────── */
+router.get('/users', validate({ query: usersQuerySchema }), adminController.getUsers);
+router.get('/users/:id', adminController.getUserDetails);
+router.patch('/users/:id/status', validate({ body: updateUserStatusSchema }), adminController.updateUserStatus);
+router.patch('/users/:id/role', requireSuperAdmin, validate({ body: updateUserRoleSchema }), adminController.updateUserRole);
+
+/* ── Messages & Deliveries ───────────────────────────────────────────── */
+router.get('/messages', validate({ query: messagesQuerySchema }), adminController.getMessages);
+router.post('/messages/:id/retry', adminController.retryMessage);
+
+/* ── Platforms Management ────────────────────────────────────────────── */
+router.get('/platforms', adminController.getPlatforms);
+router.patch('/platforms/:code/toggle', validate({ body: platformToggleSchema }), adminController.togglePlatform);
+
+/* ── Analytics ───────────────────────────────────────────────────────── */
+router.get('/analytics', validate({ query: analyticsQuerySchema }), adminController.getAnalytics);
+
+/* ── Settings & Operators ────────────────────────────────────────────── */
+router.get('/operators', adminController.getOperators);
+router.get('/settings', adminController.getSettings);
 
 export default router;
