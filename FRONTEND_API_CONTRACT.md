@@ -314,8 +314,17 @@ sms:      { "account_sid": "ACxxxx…", "twilio_number": "+14155550100", "accoun
 
 ### `GET /platforms` — `200`
 ```jsonc
-{ "data": [ /* Credential[] */ ] }     // ordered by connectedAt asc; [] when nothing connected
+{
+  "data": [ /* Credential[] */ ], // ordered by connectedAt asc
+  "capabilities": {
+    "whatsapp": { "available": true, "provider": "twilio" }
+  }
+}
 ```
+`capabilities.whatsapp.available` is true when server-configured Twilio WhatsApp
+is selected, or when this user has an active Meta WhatsApp credential. The
+provider value is `twilio` or `meta`; it never includes provider credentials.
+The credential list remains empty when the user has no user-connected platforms.
 
 ### `POST /platforms/whatsapp` — `200`
 ### `POST /platforms/telegram` — `200`

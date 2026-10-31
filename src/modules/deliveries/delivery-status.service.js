@@ -46,11 +46,11 @@ export async function transitionStatus({
   occurredAt,
   force = false,
   data = {},
-}) {
-  const target = await lookupByCode('messageStatus', toCode);
+}, { db = prisma, lookup = lookupByCode } = {}) {
+  const target = await lookup('messageStatus', toCode);
   const when = occurredAt ?? new Date();
 
-  return prisma.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
     const current = await tx.messageDelivery.findUnique({
       where: { id: deliveryId },
       include: { status: true },

@@ -37,7 +37,12 @@ function bearerToken(req) {
   return scheme === 'Bearer' && token ? token : null;
 }
 
-export async function authenticate(req, res, next) {
+export async function authenticate(
+  req,
+  res,
+  next,
+  { findActiveUser = (args) => prisma.user.findFirst(args) } = {}
+) {
   try {
     const token = bearerToken(req);
     if (!token) {
@@ -46,7 +51,7 @@ export async function authenticate(req, res, next) {
 
     const payload = verifyAccessToken(token);
 
-    const user = await prisma.user.findFirst({
+    const user = await findActiveUser({
       where: { id: payload.sub, isActive: true, deletedAt: null },
       select: userSelect,
     });
