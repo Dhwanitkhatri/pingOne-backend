@@ -12,7 +12,6 @@
 // ============================================================
 
 import { prisma } from '../../config/prisma.js';
-import { enqueueDelivery } from '../../queue/queue.service.js';
 import { computeNextRunAfter } from './recurrence.js';
 
 /**
@@ -33,18 +32,24 @@ export const FIRE_JOB_INCLUDE = Object.freeze({
  * @returns {Promise<{ deliveries: number, skippedRepliers: number,
  *                     occurrence: number, nextRunAt: Date | null }>}
  */
-export async function fireJob(job, pendingStatusId, sentStatusId) {
+export async function fireJob(
+  job,
+  pendingStatusId,
+  sentStatusId,
+  { db = prisma, enqueueDelivery: enqueue = null, computeNext = computeNextRunAfter } = {}
+) {
   const recipientPairs = await expandRecipients(job.recipients);
-  const contactPlatformPairs = await excludeRepliedRecipients(job, recipientPairs);
+  const contactPlatformPairs = await excludeRepliedRecipients(job, recipientPairs, db);
 
-  const deliveries = await prisma.$transaction(
+  const deliveries = await db.$transaction(
     contactPlatformPairs.map(({ contactId, platformId }) =>
-      prisma.messageDelivery.create({
+      db.messageDelivery.create({
         data: { jobId: job.id, contactId, platformId, statusId: pendingStatusId },
       })
     )
   );
 
+  const enqueueDelivery = enqueue ?? (await import('../../queue/queue.service.js')).enqueueDelivery;
   for (const delivery of deliveries) {
     await enqueueDelivery(delivery.id);
   }
@@ -55,13 +60,13 @@ export async function fireJob(job, pendingStatusId, sentStatusId) {
   // computeNextRunAfter walks past any runs missed while the worker was down
   // instead of firing them all in a burst. Skipped runs still count against
   // maxOccurrences, so a "10 sends" rule never exceeds 10.
-  const { nextRunAt, skipped } = computeNextRunAfter(
+  const { nextRunAt, skipped } = computeNext(
     job.nextRunAt ?? job.scheduledAt,
     job.recurrenceRule,
     occurrenceCount
   );
 
-  await prisma.scheduledJob.update({
+  await db.scheduledJob.update({
     where: { id: job.id },
     data: {
       occurrenceCount: occurrenceCount + skipped,
@@ -91,10 +96,10 @@ export async function fireJob(job, pendingStatusId, sentStatusId) {
 }
 
 /** A reply after schedule creation opts a contact out of later sends on that channel. */
-async function excludeRepliedRecipients(job, pairs) {
+async function excludeRepliedRecipients(job, pairs, db = prisma) {
   if (!job.skipIfReplied || pairs.length === 0) return pairs;
 
-  const replies = await prisma.contactReply.findMany({
+  const replies = await db.contactReply.findMany({
     where: {
       repliedAt: { gt: job.createdAt },
       OR: pairs.map(({ contactId, platformId }) => ({ contactId, platformId })),

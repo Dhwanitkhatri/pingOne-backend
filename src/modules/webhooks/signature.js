@@ -21,8 +21,10 @@
 // ============================================================
 
 import crypto from 'node:crypto';
+import twilio from 'twilio';
 import { AppError } from '../../utils/AppError.js';
 import { env } from '../../config/env.js';
+import { twilioWhatsAppStatusCallbackUrl } from '../../utils/webhook-urls.js';
 
 /**
  * Verify Meta's X-Hub-Signature-256 against the raw request body.
@@ -102,6 +104,37 @@ export function verifyTelegramSecret(req) {
   if (!timingSafeEquals(provided, env.TELEGRAM_WEBHOOK_SECRET)) {
     throw AppError.forbidden('Telegram webhook secret does not match', {
       code: 'WEBHOOK_SECRET_INVALID',
+    });
+  }
+
+  return true;
+}
+
+/** Verify Twilio's X-Twilio-Signature against the configured callback URL. */
+export function verifyTwilioSignature(req) {
+  if (!env.TWILIO_AUTH_TOKEN) {
+    throw new AppError(503, 'Twilio webhooks are not configured — TWILIO_AUTH_TOKEN is unset', {
+      code: 'WEBHOOK_NOT_CONFIGURED',
+    });
+  }
+
+  const signature = req.get('X-Twilio-Signature');
+  if (!signature) {
+    throw AppError.unauthorized('Missing X-Twilio-Signature header', {
+      code: 'WEBHOOK_SIGNATURE_MISSING',
+    });
+  }
+
+  const valid = twilio.validateRequest(
+    env.TWILIO_AUTH_TOKEN,
+    signature,
+    twilioWhatsAppStatusCallbackUrl(),
+    req.body ?? {}
+  );
+
+  if (!valid) {
+    throw AppError.forbidden('Twilio webhook signature does not match', {
+      code: 'WEBHOOK_SIGNATURE_INVALID',
     });
   }
 
