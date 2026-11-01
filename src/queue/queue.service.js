@@ -50,14 +50,18 @@ export async function assertQueueReachable() {
  *        Normal is default for regular scheduled messages
  *        Low is for background/batch operations
  */
-export async function enqueueDelivery(deliveryId, priority = 'normal') {
+export async function enqueueDelivery(deliveryId, priority = 'normal', { viaTwilio = false } = {}) {
   const priorityValue = getPriorityValue(priority);
 
   await deliveryQueue.add(
     'send',
-    { deliveryId },
+    // viaTwilio: a WhatsApp re-send after Meta's webhook reported a failure.
+    viaTwilio ? { deliveryId, viaTwilio } : { deliveryId },
     {
       priority: priorityValue,
+      // Meta redelivers webhooks, so the same failure can arrive twice; a fixed
+      // id makes BullMQ drop the duplicate instead of messaging twice.
+      ...(viaTwilio ? { jobId: `whatsapp-twilio-${deliveryId}` } : {}),
       attempts: 1, // retries are handled explicitly via retryQueue, not BullMQ's built-in attempts
       removeOnComplete: 500,
       removeOnFail: 1000,

@@ -13,7 +13,8 @@
 
 import { BaseAdapter } from './base.adapter.js';
 import { AppError } from '../utils/AppError.js';
-import { env } from '../config/env.js';
+import { env, isWhatsAppTwilioFallbackEnabled } from '../config/env.js';
+import { sendWhatsAppViaTwilio } from './twilio-whatsapp.js';
 
 // Read from env so connecting (meta.provider.js) and sending agree on one
 // Graph version — they were drifting apart, and a hardcoded version silently
@@ -67,7 +68,23 @@ export class WhatsAppAdapter extends BaseAdapter {
     return { formatted: content, hasAttachments: attachments.length > 0, attachments };
   }
 
-  async send({ secret: accessToken, extraInfo }, recipient, message) {
+  /**
+   * Meta first. With TWILIO_WHATSAPP_FALLBACK on, a rejected send goes out
+   * through Twilio instead, and `message.viaTwilio` (set when Meta's webhook
+   * reports a failure after accepting the send) skips Meta entirely.
+   */
+  async send(credential, recipient, message) {
+    if (message.viaTwilio) return sendWhatsAppViaTwilio(recipient, message);
+    try {
+      return await this.#sendViaMeta(credential, recipient, message);
+    } catch (err) {
+      if (!isWhatsAppTwilioFallbackEnabled) throw err;
+      console.warn(`[whatsapp] Meta send failed, sending through Twilio instead: ${err.message}`);
+      return sendWhatsAppViaTwilio(recipient, message);
+    }
+  }
+
+  async #sendViaMeta({ secret: accessToken, extraInfo }, recipient, message) {
     const phoneNumberId = extraInfo?.phone_number_id;
     // An OAuth connect whose number couldn't be discovered stores null here;
     // without this Graph gets POST /null/messages and a baffling error back.

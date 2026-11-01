@@ -115,6 +115,25 @@ const envSchema = z.object({
   ),
   TWILIO_AUTH_TOKEN: optional(z.string().trim().min(10).optional()),
 
+  // ---- WhatsApp -> Twilio fallback ---------------------------------
+  // 'true' re-sends a WhatsApp message through Twilio's WhatsApp sender when
+  // Meta rejects it — immediately, or later via a `failed` status webhook
+  // (account locked, 24h window closed, …). Signed with TWILIO_ACCOUNT_SID /
+  // TWILIO_AUTH_TOKEN above. With the Twilio Sandbox each recipient must first
+  // send "join <code>" to the sandbox number.
+  TWILIO_WHATSAPP_FALLBACK: optional(z.enum(['true', 'false']).optional()),
+  // E.164 sender, with or without Twilio's "whatsapp:" prefix (added at send
+  // time). Defaults to Twilio's shared WhatsApp Sandbox number.
+  TWILIO_WHATSAPP_FROM: optional(
+    z.preprocess(
+      (val) => (typeof val === 'string' ? val.trim().replace(/^whatsapp:/i, '') : val),
+      z
+        .string()
+        .regex(/^\+[1-9]\d{6,14}$/, 'TWILIO_WHATSAPP_FROM must be E.164, e.g. +14155238886')
+        .optional()
+    )
+  ).default('+14155238886'),
+
   // ---- Outbound email (SMTP) --------------------------------------
   // Transactional mail the SERVER sends as itself: password-reset links and
   // permanent-failure alerts. Nothing to do with the Gmail platform adapter,
@@ -248,6 +267,9 @@ export const isTelegramPollingEnabled =
 // App's own dashboard configuration, not from the authorize request.
 export const isTwilioConnectConfigured = Boolean(
   env.TWILIO_CONNECT_APP_SID && env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN
+);
+export const isWhatsAppTwilioFallbackEnabled = Boolean(
+  env.TWILIO_WHATSAPP_FALLBACK === 'true' && env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN
 );
 export const isAiConfigured = Boolean(env.GEMINI_API_KEY || env.AI_API_KEY);
 

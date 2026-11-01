@@ -21,6 +21,7 @@ import { transitionStatus } from '../deliveries/delivery-status.service.js';
 import { lookupByCode } from '../../utils/lookupCache.js';
 import { MESSAGE_STATUS, CHANGED_BY, PLATFORM } from '../../constants/codes.js';
 import { extractStartPayload, parseStartPayload } from '../../utils/telegramLink.js';
+import { isWhatsAppTwilioFallbackEnabled } from '../../config/env.js';
 
 /** Meta's status strings -> our message_statuses codes. */
 const META_STATUS_MAP = {
@@ -108,6 +109,27 @@ async function applyWhatsAppStatus(status) {
     // PingOne instance pointed at the same Meta app.
     console.warn(`[webhook:whatsapp] no delivery found for message id ${status.id}`);
     return 'unmatched';
+  }
+
+  // Meta accepted the send but couldn't deliver it (account locked, 24h window
+  // closed, …). With the fallback on, re-send through Twilio instead of
+  // recording the failure; the worker then stores Twilio's id, so later Meta
+  // events for this message no longer match. If the queue is unreachable, fall
+  // through and record the failure as usual.
+  if (toCode === MESSAGE_STATUS.FAILED && isWhatsAppTwilioFallbackEnabled) {
+    try {
+      // Loaded lazily, as in dispatch.js: importing it opens a Redis connection.
+      const { assertQueueReachable, enqueueDelivery } = await import('../../queue/queue.service.js');
+      // Without this an add() against a down Redis waits instead of throwing.
+      await assertQueueReachable();
+      await enqueueDelivery(delivery.id, 'normal', { viaTwilio: true });
+      console.warn(
+        `[webhook:whatsapp] delivery ${delivery.id} failed at Meta (${describeMetaErrors(status.errors)}), re-sending through Twilio`
+      );
+      return 'processed';
+    } catch (err) {
+      console.error(`[webhook:whatsapp] could not queue Twilio re-send for delivery ${delivery.id}: ${err.message}`);
+    }
   }
 
   const result = await transitionStatus({

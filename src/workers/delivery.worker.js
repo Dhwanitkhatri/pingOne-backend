@@ -63,7 +63,7 @@ export function startDeliveryWorker() {
 }
 
 async function processDeliveryJob(job) {
-  const { deliveryId } = job.data;
+  const { deliveryId, viaTwilio } = job.data;
 
   const delivery = await prisma.messageDelivery.findUnique({
     where: { id: deliveryId },
@@ -148,6 +148,9 @@ async function processDeliveryJob(job) {
 
     const adapter = getAdapter(delivery.platform.code);
     const formatted = adapter.formatMessage(content, attachments);
+    // A WhatsApp re-send queued by Meta's failure webhook skips Meta and goes
+    // straight to Twilio; every other adapter ignores the flag.
+    if (viaTwilio) formatted.viaTwilio = true;
     // Gmail uses the optional subject; other adapters ignore the fourth
     // argument and continue sending their plain message body unchanged.
     const result = await adapter.send(
