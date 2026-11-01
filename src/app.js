@@ -27,7 +27,16 @@ app.set('trust proxy', 1);
 // crossOriginResourcePolicy is relaxed to cross-origin so the frontend (and
 // Twilio, fetching MMS media) can load attachment files from /uploads. Helmet's
 // default of same-origin would block both.
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+// crossOriginOpenerPolicy is off because the OAuth popup passes through this
+// API's /auth/*/callback redirect. Helmet's default same-origin on that 302
+// severs window.opener, so the frontend's /oauth/callback page can't
+// postMessage the result back. This API serves no HTML, so it loses nothing.
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
+  })
+);
 
 // CORS — only allow the configured frontend origins
 app.use(
