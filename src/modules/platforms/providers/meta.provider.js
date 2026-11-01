@@ -45,12 +45,16 @@ export function buildAuthorizationUrl(state) {
     client_id: env.META_APP_ID,
     redirect_uri: env.META_REDIRECT_URI,
     response_type: 'code',
-    scope: META_SCOPES.join(','),
     state,
   });
 
-  // Embedded Signup onboards a business in-dialog; only sent when configured.
+  // Business-type apps only have "Facebook Login for Business", which takes a
+  // configuration id instead of scopes — the permissions live on the
+  // configuration. Without one, the dialog falls back to classic Facebook
+  // Login, which has no redirect URIs on such an app and fails with "Can't
+  // load URL". Scopes are only for apps using classic Facebook Login.
   if (env.META_CONFIG_ID) params.set('config_id', env.META_CONFIG_ID);
+  else params.set('scope', META_SCOPES.join(','));
 
   return `https://www.facebook.com/${env.META_API_VERSION}/dialog/oauth?${params.toString()}`;
 }
