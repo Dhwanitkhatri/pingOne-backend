@@ -14,7 +14,7 @@
 // ============================================================
 
 import { Worker } from 'bullmq';
-import { connection, QUEUE_NAMES, attachErrorLogging, moveToDeadLetterQueue, deliveryQueue } from '../queue/bull.queue.js';
+import { connection, prefix, QUEUE_NAMES, attachErrorLogging, moveToDeadLetterQueue, deliveryQueue } from '../queue/bull.queue.js';
 import { prisma } from '../config/prisma.js';
 import { getAdapter } from '../platforms/adapter.registry.js';
 import { resolveRecipientHandle } from '../modules/scheduler/recipient-resolver.js';
@@ -34,6 +34,7 @@ const ALREADY_CONFIRMED = new Set([MESSAGE_STATUS.DELIVERED, MESSAGE_STATUS.READ
 export function startDeliveryWorker() {
   const worker = new Worker(QUEUE_NAMES.DELIVERY, processDeliveryJob, {
     connection,
+    prefix,
     concurrency: 5,
     settings: {
       lockDuration: 30_000, // lock each job for 30s (must complete or retry)

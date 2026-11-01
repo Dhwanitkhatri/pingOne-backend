@@ -13,7 +13,7 @@
 // ============================================================
 
 import { Worker } from 'bullmq';
-import { connection, QUEUE_NAMES, attachErrorLogging, retryQueue } from '../queue/bull.queue.js';
+import { connection, prefix, QUEUE_NAMES, attachErrorLogging, retryQueue } from '../queue/bull.queue.js';
 import { enqueueDelivery } from '../queue/queue.service.js';
 import { workerManager } from '../utils/worker-manager.js';
 
@@ -27,6 +27,7 @@ export function startRetryWorker() {
     },
     {
       connection,
+      prefix,
       concurrency: 5,
       settings: {
         lockDuration: 30_000,

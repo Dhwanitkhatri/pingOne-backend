@@ -160,6 +160,18 @@ const envSchema = z.object({
   // Redis, backing the BullMQ delivery/retry queues. Only the worker process
   // and the scheduler need it — the API boots fine without Redis running.
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  // Namespace for every BullMQ key. Environments sharing one Redis (prod and a
+  // laptop, two teammates) MUST use different prefixes, or each one's workers
+  // take the other's jobs — and, finding no such delivery in their own
+  // database, silently skip them, leaving those recipients pending forever.
+  // 'bull' is BullMQ's own default, so leaving this unset keeps existing queues.
+  QUEUE_PREFIX: optional(
+    z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_-]+$/, 'QUEUE_PREFIX may contain only letters, digits, "-" and "_"')
+      .optional()
+  ).default('bull'),
 
   // ---- Message attachments ----------------------------------------
   // Where attachment files are written. A relative path (the dev default) is

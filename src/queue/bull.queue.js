@@ -52,6 +52,10 @@ export function attachErrorLogging(emitter, label) {
 // BullMQ requires maxRetriesPerRequest: null on the shared connection.
 export const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
+// Key namespace for every Queue AND Worker — both sides must agree, or a
+// worker listens on keys nothing is written to. See QUEUE_PREFIX in env.js.
+export const prefix = env.QUEUE_PREFIX;
+
 // REDIS_URL carries the password for hosted Redis (rediss://default:<pw>@host).
 // Logs end up in places a secret must not (hosting dashboards, shared
 // terminals), so only host and port are ever printed.
@@ -78,7 +82,7 @@ connection.on('error', (err) => {
 });
 connection.on('ready', () => {
   bootErrorLogged = false;
-  console.log(`[queue] connected to Redis at ${redisLabel}`);
+  console.log(`[queue] connected to Redis at ${redisLabel} (prefix "${prefix}")`);
 });
 
 export const QUEUE_NAMES = Object.freeze({
@@ -116,11 +120,11 @@ const QUEUE_CONFIG = Object.freeze({
 // RedisConnection, and BullMQ's QueueBase console.errors the raw error object
 // when nothing is listening.
 export const deliveryQueue = attachErrorLogging(
-  new Queue(QUEUE_NAMES.DELIVERY, { connection, ...QUEUE_CONFIG[QUEUE_NAMES.DELIVERY] }),
+  new Queue(QUEUE_NAMES.DELIVERY, { connection, prefix, ...QUEUE_CONFIG[QUEUE_NAMES.DELIVERY] }),
   'queue:delivery'
 );
 export const retryQueue = attachErrorLogging(
-  new Queue(QUEUE_NAMES.RETRY, { connection, ...QUEUE_CONFIG[QUEUE_NAMES.RETRY] }),
+  new Queue(QUEUE_NAMES.RETRY, { connection, prefix, ...QUEUE_CONFIG[QUEUE_NAMES.RETRY] }),
   'queue:retry'
 );
 
@@ -128,11 +132,11 @@ export const retryQueue = attachErrorLogging(
 // all retries and will not be retried further. These are read-only from the
 // worker perspective; they exist for audit and manual intervention.
 export const deliveryDLQ = attachErrorLogging(
-  new Queue(QUEUE_NAMES.DELIVERY_DLQ, { connection }),
+  new Queue(QUEUE_NAMES.DELIVERY_DLQ, { connection, prefix }),
   'queue:delivery:dlq'
 );
 export const retryDLQ = attachErrorLogging(
-  new Queue(QUEUE_NAMES.RETRY_DLQ, { connection }),
+  new Queue(QUEUE_NAMES.RETRY_DLQ, { connection, prefix }),
   'queue:retry:dlq'
 );
 
@@ -144,7 +148,7 @@ export const retryDLQ = attachErrorLogging(
  * @param {Error} reason - The failure reason
  */
 export async function moveToDeadLetterQueue(queue, dlqName, job, reason) {
-  const dlq = new Queue(dlqName, { connection });
+  const dlq = new Queue(dlqName, { connection, prefix });
   await dlq.add(job.name, job.data, {
     ...job.opts,
     data: {
