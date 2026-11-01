@@ -597,8 +597,16 @@ async function probePlatformApis() {
       WHERE d.created_at >= ${since}
     `;
 
+    // Gmail is excluded: its stored secret is a refresh token, and expiresAt is
+    // only the one-hour ACCESS token's — renewed automatically on every send —
+    // so it reads as "expired" an hour after connecting while working fine.
+    // Meta's long-lived WhatsApp token does genuinely expire, so it counts.
     const expiredCredentials = await prisma.userPlatformCredential.count({
-      where: { isActive: true, expiresAt: { not: null, lt: new Date() } },
+      where: {
+        isActive: true,
+        expiresAt: { not: null, lt: new Date() },
+        platform: { code: { not: 'gmail' } },
+      },
     });
 
     const failureRate = row.total ? (row.failed / row.total) * 100 : 0;

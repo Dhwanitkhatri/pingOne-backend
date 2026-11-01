@@ -19,6 +19,32 @@ import { AppError } from '../../utils/AppError.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * A pending/sending delivery untouched for this long has lost its queue job —
+ * a healthy one is picked up within seconds, and even the longest retry
+ * backoff (10 min) moves it to `failed` first, which updates the row.
+ */
+const STUCK_AFTER_MINUTES = 15;
+
+const isStuck = (delivery) =>
+  [MESSAGE_STATUS.PENDING, MESSAGE_STATUS.SENDING].includes(delivery.status?.code) &&
+  Date.now() - new Date(delivery.updatedAt).getTime() > STUCK_AFTER_MINUTES * 60_000;
+
+const isRetryable = (delivery) => delivery.status?.code === MESSAGE_STATUS.FAILED || isStuck(delivery);
+
+/**
+ * The address a delivery went to on its own channel — an email for Gmail, the
+ * Telegram handle for Telegram, the number for WhatsApp/SMS — mirroring how
+ * scheduler/recipient-resolver.js picks it (platform handle, then primary).
+ */
+function recipientAddressFor(platformCode, contact) {
+  if (!contact) return null;
+  const handle = contact.platformHandles?.find((h) => h.platform?.code === platformCode)?.handle;
+  if (platformCode === 'gmail') return handle ?? contact.emails?.[0]?.email ?? null;
+  if (platformCode === 'telegram') return handle ?? null;
+  return handle ?? contact.phones?.[0]?.phone ?? null;
+}
+
 /** Admin login throttle — applied in admin.routes.js, reported by getSystemSettings. */
 export const ADMIN_LOGIN_LIMIT = Object.freeze({ max: 10, windowMinutes: 15 });
 
@@ -295,6 +321,7 @@ export async function listMessages({
       select: {
         id: true,
         createdAt: true,
+        updatedAt: true,
         sentAt: true,
         deliveredAt: true,
         readAt: true,
@@ -308,8 +335,10 @@ export async function listMessages({
             id: true,
             firstName: true,
             lastName: true,
-            phones: { select: { phone: true, isPrimary: true }, take: 1 },
-            emails: { select: { email: true, isPrimary: true }, take: 1 },
+            // Primary first, so [0] is the address the worker actually used.
+            phones: { select: { phone: true, isPrimary: true }, orderBy: { isPrimary: 'desc' }, take: 1 },
+            emails: { select: { email: true, isPrimary: true }, orderBy: { isPrimary: 'desc' }, take: 1 },
+            platformHandles: { select: { handle: true, platform: { select: { code: true } } } },
           },
         },
         job: {
@@ -330,7 +359,15 @@ export async function listMessages({
         COUNT(*) FILTER (WHERE s.code IN ('sent', 'delivered', 'read'))::int AS sent_count,
         COUNT(*) FILTER (WHERE s.code IN ('delivered', 'read'))::int AS delivered_count,
         COUNT(*) FILTER (WHERE s.code = 'failed')::int AS failed_count,
-        COUNT(*) FILTER (WHERE s.code IN ('pending', 'sending'))::int AS pending_count
+        -- Queued or sending within the stuck threshold: genuinely in flight.
+        -- Anything older lost its queue job (e.g. a worker that died, or one
+        -- on another database took it) and will never move on its own.
+        COUNT(*) FILTER (
+          WHERE s.code IN ('pending', 'sending') AND d.updated_at >= NOW() - ${STUCK_AFTER_MINUTES}::int * INTERVAL '1 minute'
+        )::int AS pending_count,
+        COUNT(*) FILTER (
+          WHERE s.code IN ('pending', 'sending') AND d.updated_at < NOW() - ${STUCK_AFTER_MINUTES}::int * INTERVAL '1 minute'
+        )::int AS stuck_count
       FROM message_deliveries d
       JOIN message_statuses s ON s.id = d.status_id
     `,
@@ -340,10 +377,25 @@ export async function listMessages({
   const totalAll = rawCount.total_all ?? 0;
   const sentCount = rawCount.sent_count ?? 0;
   const failedCount = rawCount.failed_count ?? 0;
-  const successRate = totalAll > 0 ? Math.round((sentCount / totalAll) * 100) : 100;
+  // Of the deliveries that reached an outcome, how many the platform
+  // accepted. Pending/stuck ones haven't succeeded OR failed yet, so counting
+  // them against the rate (as this used to) understated it.
+  const finished = sentCount + failedCount;
+  const successRate = finished > 0 ? Math.round((sentCount / finished) * 100) : 100;
 
   return {
-    deliveries,
+    deliveries: deliveries.map(({ contact, ...delivery }) => ({
+      ...delivery,
+      contact: contact && {
+        id: contact.id,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        phones: contact.phones,
+        emails: contact.emails,
+      },
+      recipientAddress: recipientAddressFor(delivery.platform?.code, contact),
+      isStuck: isStuck(delivery),
+    })),
     pagination: {
       total,
       page,
@@ -356,17 +408,20 @@ export async function listMessages({
       deliveredCount: rawCount.delivered_count ?? 0,
       failedCount,
       pendingCount: rawCount.pending_count ?? 0,
+      stuckCount: rawCount.stuck_count ?? 0,
       successRate,
     },
   };
 }
 
 /**
- * Manually re-queue a failed delivery.
+ * Manually re-queue a failed — or stuck — delivery.
  *
- * Only `failed` is retryable. A `pending`/`sending` row is already on the
- * queue, and re-queueing a `sent`/`delivered`/`read` one would message the
- * recipient twice — the worker's own guard only covers the confirmed states.
+ * `failed` is retryable, and so is a `pending`/`sending` row that hasn't moved
+ * for STUCK_AFTER_MINUTES: its queue job is gone, so it would otherwise sit
+ * there forever. A fresher pending row is still on the queue, and re-queueing
+ * a `sent`/`delivered`/`read` one would message the recipient twice — the
+ * worker's own guard only covers the confirmed states.
  *
  * The retry count is reset so the re-queued attempt gets the full automatic
  * backoff ladder again; a manual retry is a fresh start, not attempt N+1 of a
@@ -382,10 +437,11 @@ export async function retryDelivery({ deliveryId, adminUser, sessionContext }) {
     throw AppError.notFound('Delivery record not found');
   }
 
-  if (delivery.status.code !== MESSAGE_STATUS.FAILED) {
-    throw AppError.badRequest(`Only failed deliveries can be retried (this one is ${delivery.status.code})`, {
-      code: 'DELIVERY_NOT_RETRYABLE',
-    });
+  if (!isRetryable(delivery)) {
+    throw AppError.badRequest(
+      `Only failed or stuck deliveries can be retried (this one is ${delivery.status.code})`,
+      { code: 'DELIVERY_NOT_RETRYABLE' }
+    );
   }
 
   // Before touching the row — a delivery flipped to pending with no queue job

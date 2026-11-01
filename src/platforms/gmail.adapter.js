@@ -57,6 +57,18 @@ function encodeHeaderValue(value) {
   return `=?UTF-8?B?${Buffer.from(clean, 'utf8').toString('base64')}?=`;
 }
 
+/**
+ * Message text placed inside the HTML body must not be read as markup — a
+ * "<" or "&" would otherwise break the email or let a message inject HTML.
+ */
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /** Base64 in a MIME body has to be wrapped — RFC 2045 caps lines at 76 chars. */
 function wrapBase64(base64) {
   return base64.replace(/(.{76})/g, '$1\r\n');
@@ -115,7 +127,7 @@ export class GmailAdapter extends BaseAdapter {
   }
 
   formatMessage(content, attachments = []) {
-    const html = `<div>${content.replace(/\n/g, '<br>')}</div>`;
+    const html = `<div>${escapeHtml(content).replace(/\n/g, '<br>')}</div>`;
     return { formatted: html, hasAttachments: attachments.length > 0, attachments };
   }
 
