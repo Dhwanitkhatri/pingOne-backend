@@ -224,18 +224,21 @@ export async function handleTelegramEvent(update) {
 async function linkTelegramChat(chatId, message) {
   const telegram = await lookupByCode('platform', PLATFORM.TELEGRAM);
 
-  // Already known — the overwhelmingly common case, one indexed lookup.
-  const existing = await prisma.contactPlatformHandle.findFirst({
-    where: { platformId: telegram.id, chatId },
-    select: { id: true },
-  });
-  if (existing) return false;
-
   // ---- 1. signed deep link ----
   const payload = extractStartPayload(message?.text);
   const contactId = payload ? parseStartPayload(payload) : null;
 
-  if (contactId) {
+  // Checked against THIS contact, not "any contact with this chat". The same
+  // person is often in several users' address books, and a chat already
+  // linked to one of them must not stop another user's invite from linking.
+  const current = contactId
+    ? await prisma.contactPlatformHandle.findUnique({
+        where: { contactId_platformId: { contactId, platformId: telegram.id } },
+        select: { chatId: true },
+      })
+    : null;
+
+  if (contactId && current?.chatId !== chatId) {
     // upsert: the contact may have no Telegram handle row yet if the owner
     // sent the invite before typing a username.
     const linkedRow = await prisma.contactPlatformHandle.upsert({
@@ -267,6 +270,13 @@ async function linkTelegramChat(chatId, message) {
   // ---- 2. username fallback ----
   const username = message?.from?.username;
   if (!username) return false;
+
+  // Already known — the overwhelmingly common case, one indexed lookup.
+  const existing = await prisma.contactPlatformHandle.findFirst({
+    where: { platformId: telegram.id, chatId },
+    select: { id: true },
+  });
+  if (existing) return false;
 
   const { count } = await prisma.contactPlatformHandle.updateMany({
     where: {

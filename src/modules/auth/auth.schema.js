@@ -3,7 +3,7 @@
 // ============================================================
 
 import { z } from 'zod';
-import { emailString } from '../../utils/validators.js';
+import { emailString, personNameString } from '../../utils/validators.js';
 
 const password = z
   .string()
@@ -11,8 +11,8 @@ const password = z
   .max(72, 'Password must be at most 72 characters'); // bcrypt truncates beyond 72 bytes
 
 export const signupSchema = z.object({
-  firstName: z.string().trim().min(1, 'First name is required').max(100),
-  lastName: z.string().trim().min(1, 'Last name is required').max(100),
+  firstName: personNameString('First name'),
+  lastName: personNameString('Last name'),
   email: emailString,
   password,
 });

@@ -688,7 +688,7 @@ No `data`. Errors: `400 MESSAGE_IN_USE` — the message is attached to a schedul
 ```
 
 ### `POST /messages/:id/attachments` — `201`
-Multipart, field name `files`. Up to `ATTACHMENT_MAX_FILES` (default 5), each ≤ `ATTACHMENT_MAX_UPLOAD_MB` (default 10 MB).
+Multipart, field name `files`. Up to `ATTACHMENT_MAX_FILES` (default 10), each ≤ `ATTACHMENT_MAX_UPLOAD_MB` (default 10 MB).
 ```jsonc
 { "message": "2 attachment(s) uploaded successfully", "data": [ /* Attachment[] */ ] }
 ```

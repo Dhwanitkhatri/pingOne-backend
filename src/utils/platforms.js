@@ -23,7 +23,11 @@ async function loadCache() {
 
   const rows = await prisma.platform.findMany({ select: { id: true, code: true } });
   if (!rows.length) {
-    throw new AppError(500, 'Platforms are not seeded — run `npm run db:seed`', {
+    // A deploy problem, not the user's: `start` only runs migrations, so a
+    // fresh database has an empty reference table until someone seeds it.
+    // The fix goes in the server log; the client gets a plain 500.
+    console.error('[platforms] The platforms table is empty — run `npm run db:seed` against this database.');
+    throw new AppError(500, 'Something went wrong on our side. Please try again later.', {
       code: 'PLATFORMS_NOT_SEEDED',
     });
   }

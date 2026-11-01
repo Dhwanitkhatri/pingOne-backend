@@ -181,7 +181,7 @@ const envSchema = z.object({
   // job scheduled for tomorrow would find its attachments gone. See render.yaml.
   UPLOAD_DIR: z.string().trim().default('uploads'),
   ATTACHMENT_MAX_UPLOAD_MB: z.coerce.number().positive().max(100).default(10),
-  ATTACHMENT_MAX_FILES: z.coerce.number().int().positive().max(20).default(5),
+  ATTACHMENT_MAX_FILES: z.coerce.number().int().positive().max(20).default(10),
 
   // Public origin of THIS API. Attachment fileUrls are built from it, and
   // Twilio MMS fetches media over the public internet — so for real MMS this

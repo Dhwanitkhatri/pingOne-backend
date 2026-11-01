@@ -432,7 +432,7 @@ client can poll this endpoint or use it as the source for its push gateway.
 | GET    | `/messages/:id`                            | –                                                     |
 | PATCH  | `/messages/:id`                            | any of `content`, `templateId`                        |
 | DELETE | `/messages/:id`                            | refused while a scheduled job still references it     |
-| POST   | `/messages/:id/attachments`                | `multipart/form-data`, field **`files`** (1–5 files)  |
+| POST   | `/messages/:id/attachments`                | `multipart/form-data`, field **`files`** (1–10 files) |
 | GET    | `/messages/:id/attachments`                | –                                                     |
 | DELETE | `/messages/:id/attachments/:attachmentId`  | refused once the message has been sent                |
 

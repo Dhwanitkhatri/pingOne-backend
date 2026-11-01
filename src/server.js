@@ -5,12 +5,13 @@
 // ============================================================
 
 import app from './app.js';
-import { env, isTelegramPollingEnabled } from './config/env.js';
+import { env, isProd, isTelegramPollingEnabled } from './config/env.js';
 import { prisma } from './config/prisma.js';
 import {
   startTelegramPollWorker,
   stopTelegramPollWorker,
 } from './workers/telegram-poll.worker.js';
+import { registerAllTelegramWebhooks } from './modules/platforms/platforms.service.js';
 import { verifyMailer } from './utils/mailer.js';
 
 const server = app.listen(env.PORT, () => {
@@ -25,6 +26,17 @@ const server = app.listen(env.PORT, () => {
   // Lives in the API process, not the worker process, because it is standing
   // in for POST /webhooks/telegram — same process, same handler, same logs.
   if (isTelegramPollingEnabled) startTelegramPollWorker();
+
+  // The other half of that: in production, make sure every connected bot's
+  // webhook points here (a no-op unless TELEGRAM_WEBHOOK_SECRET and an https
+  // PUBLIC_BASE_URL are set). Production only, because a dev machine sharing
+  // the database would otherwise re-register production's bots with its own
+  // secret, and production would then reject every update.
+  if (isProd) {
+    registerAllTelegramWebhooks().catch((err) =>
+      console.error(`[telegram] webhook registration at boot failed: ${err.message}`)
+    );
+  }
 });
 
 async function shutdown(signal) {

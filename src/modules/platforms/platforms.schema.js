@@ -7,7 +7,7 @@
 // ============================================================
 
 import { z } from 'zod';
-import { emailString, platformCode } from '../../utils/validators.js';
+import { emailString, normalizePhone, platformCode } from '../../utils/validators.js';
 
 // WhatsApp Cloud (Business) API: a long-lived access token + the phone
 // number id the token is scoped to.
@@ -38,12 +38,19 @@ export const telegramSchema = z.object({
  *
  * Telegram decides where the code goes — the Telegram app if the account is
  * signed in somewhere, SMS otherwise.
+ *
+ * Separators are stripped before the E.164 check, the same as every other
+ * phone field: "+91 98765 43210" is how people type a number, and rejecting
+ * it was the 400 users hit when connecting.
  */
 export const telegramUserStartSchema = z.object({
   phoneNumber: z
     .string()
     .trim()
-    .regex(/^\+[1-9]\d{6,14}$/, 'phoneNumber must be E.164 format, e.g. +919876543210'),
+    .transform(normalizePhone)
+    .refine((v) => /^\+[1-9]\d{6,14}$/.test(v), {
+      message: 'Enter the number with its country code, e.g. +919876543210',
+    }),
 });
 
 /**

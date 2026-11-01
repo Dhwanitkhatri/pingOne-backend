@@ -921,9 +921,9 @@ async function main() {
     f.append('files', new Blob([Buffer.alloc(11 * 1024 * 1024)], { type: 'image/png' }), 'huge.png');
     return expectErr(await api('POST', `/messages/${M2.id}/attachments`, { token: A.token, form: f }), 400, 'LIMIT_FILE_SIZE');
   });
-  await tc('TC-MSG-13', MS, 'Upload more than 5 files', '6 files in one request', '400 LIMIT_FILE_COUNT', async () => {
+  await tc('TC-MSG-13', MS, 'Upload more than 10 files', '11 files in one request', '400 LIMIT_FILE_COUNT', async () => {
     const f = new FormData();
-    for (let i = 0; i < 6; i += 1) f.append('files', new Blob(['hello'], { type: 'text/plain' }), `n${i}.txt`);
+    for (let i = 0; i < 11; i += 1) f.append('files', new Blob(['hello'], { type: 'text/plain' }), `n${i}.txt`);
     return expectErr(await api('POST', `/messages/${M2.id}/attachments`, { token: A.token, form: f }), 400, 'LIMIT_FILE_COUNT');
   });
   await tc('TC-MSG-14', MS, 'Download an attachment', 'Open the returned fileUrl', '200; served with Content-Disposition: attachment', async () => {

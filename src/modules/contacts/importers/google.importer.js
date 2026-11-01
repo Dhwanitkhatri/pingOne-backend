@@ -26,7 +26,17 @@ const MAX_PAGES = 20; // 10k contacts is a generous ceiling for one import
  * @returns {Promise<{ rows: Array<object>, account: string | undefined, fetched: number }>}
  */
 export async function fetchGoogleContacts(userId) {
-  const credential = await platformsService.getDecryptedCredential(userId, 'gmail');
+  let credential;
+  try {
+    credential = await platformsService.getDecryptedCredential(userId, 'gmail');
+  } catch (err) {
+    // The generic "No active gmail account" doesn't tell the user what to do.
+    if (err.code !== 'PLATFORM_NOT_CONNECTED') throw err;
+    throw AppError.badRequest('Connect your Gmail account on the Platforms page before importing from Google.', {
+      code: 'PLATFORM_NOT_CONNECTED',
+      details: { platform: 'gmail' },
+    });
+  }
 
   let accessToken;
   try {
@@ -35,7 +45,7 @@ export async function fetchGoogleContacts(userId) {
     // A revoked / expired grant is the common case — tell the user how to fix it.
     throw new AppError(
       err.statusCode === 502 ? 502 : 400,
-      'Could not refresh your Google authorization. Reconnect Gmail at GET /auth/google.',
+      'Could not refresh your Google authorization. Reconnect Gmail on the Platforms page and try again.',
       { code: 'GOOGLE_REAUTH_REQUIRED', details: err.details }
     );
   }

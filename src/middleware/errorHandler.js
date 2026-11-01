@@ -62,7 +62,7 @@ export function errorHandler(err, req, res, next) {
       err.code === 'LIMIT_FILE_SIZE'
         ? `That file is too large — the limit is ${limitMb} MB`
         : err.code === 'LIMIT_FILE_COUNT'
-          ? `Too many files — at most ${env.ATTACHMENT_MAX_FILES} per request`
+          ? `Too many files — you can attach up to ${env.ATTACHMENT_MAX_FILES} files at once, ${env.ATTACHMENT_MAX_UPLOAD_MB} MB each`
           : err.code === 'LIMIT_UNEXPECTED_FILE'
             ? `Unexpected file field "${err.field}"`
             : `Upload failed: ${err.message}`;

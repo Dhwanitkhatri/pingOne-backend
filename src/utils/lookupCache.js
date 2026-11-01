@@ -23,7 +23,9 @@ export async function lookupByCode(model, code) {
 
   const row = await prisma[model].findUnique({ where: { code } });
   if (!row) {
-    throw new AppError(500, `"${code}" is not seeded in ${model} — check your db:seed script`, {
+    // Missing reference data is a deploy problem — say so in the log, not to the user.
+    console.error(`[lookupCache] "${code}" is not seeded in ${model} — run \`npm run db:seed\`.`);
+    throw new AppError(500, 'Something went wrong on our side. Please try again later.', {
       code: 'REFERENCE_NOT_SEEDED',
     });
   }

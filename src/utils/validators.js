@@ -76,6 +76,27 @@ export const emailString = z
   .email('A valid email address is required')
   .max(255);
 
+/**
+ * A first or last name: letters only, words separated by single spaces.
+ * Stray whitespace is trimmed and collapsed before the check, so
+ * "  Van   Der Berg " is stored as "Van Der Berg" rather than rejected.
+ * Mirrors the signup form's rule so the API can't be used to bypass it.
+ * @param {string} label  e.g. "First name" — used in the error messages
+ */
+export function personNameString(label) {
+  return z
+    .string()
+    .transform((v) => v.trim().replace(/\s+/g, ' '))
+    .pipe(
+      z
+        .string()
+        .min(1, `${label} is required`)
+        .max(100)
+        // Empty is left to min() above, so a blank name reports one error, not two.
+        .regex(/^(?:[A-Za-z]+(?: [A-Za-z]+)*)?$/, `${label} can only contain letters and spaces`)
+    );
+}
+
 /** One of the seeded platform codes. */
 export const platformCode = z.enum(PLATFORM_CODES, {
   errorMap: () => ({ message: `platform must be one of: ${PLATFORM_CODES.join(', ')}` }),

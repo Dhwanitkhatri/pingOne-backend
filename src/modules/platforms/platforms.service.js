@@ -17,9 +17,9 @@ import { encryptToken, decryptToken } from '../../utils/crypto.js';
 import { getPlatformId } from '../../utils/platforms.js';
 import { fetchJson } from '../../utils/httpClient.js';
 import { AppError } from '../../utils/AppError.js';
-import { env } from '../../config/env.js';
+import { env, isTelegramPollingEnabled } from '../../config/env.js';
 import * as telegramUser from './providers/telegram-user.provider.js';
-import { TELEGRAM_MODES } from '../../platforms/telegram.adapter.js';
+import { TELEGRAM_MODES, telegramModeOf } from '../../platforms/telegram.adapter.js';
 
 // Fields safe to return to the client (never the secret / iv).
 const publicSelect = {
@@ -242,7 +242,7 @@ export async function connectTelegram(userId, { botToken }) {
 
   const bot = me?.result ?? {};
 
-  return connect({
+  const credential = await connect({
     userId,
     platformCode: 'telegram',
     secret: botToken,
@@ -255,6 +255,96 @@ export async function connectTelegram(userId, { botToken }) {
       ...(bot.first_name ? { bot_name: bot.first_name } : {}),
     },
   });
+
+  await registerTelegramWebhook(botToken, bot.username ? `@${bot.username}` : 'bot');
+
+  return credential;
+}
+
+/* ── Telegram bot webhook registration ────────────────────────────────── */
+
+/**
+ * Where Telegram should POST this deployment's bot updates, or null when
+ * webhooks can't or shouldn't be used here.
+ *
+ * Without a registered webhook (and with polling off, the production default)
+ * Telegram holds every update on its side and the app never sees a contact
+ * press Start — so no chat_id is ever captured and every bot send fails
+ * TELEGRAM_NOT_LINKED even for contacts who did everything right. Telegram
+ * only accepts HTTPS, signature.js rejects updates without the shared
+ * secret, and a webhook would make the getUpdates poller stand down, so all
+ * three must line up.
+ */
+function telegramWebhookUrl() {
+  if (isTelegramPollingEnabled) return null;
+  if (!env.TELEGRAM_WEBHOOK_SECRET) return null;
+  if (!env.PUBLIC_BASE_URL.startsWith('https://')) return null;
+
+  return `${env.PUBLIC_BASE_URL.replace(/\/+$/, '')}${env.API_PREFIX}/webhooks/telegram`;
+}
+
+/**
+ * Point a bot's updates at POST /webhooks/telegram. Idempotent.
+ *
+ * Best-effort: a failure is logged, never thrown, because the token itself
+ * is valid and the connection should still succeed. Pending updates are kept
+ * (no `drop_pending_updates`), so contacts who pressed Start before the
+ * webhook existed are linked as soon as Telegram redelivers them.
+ */
+export async function registerTelegramWebhook(botToken, label = 'bot') {
+  const url = telegramWebhookUrl();
+  if (!url) return false;
+
+  try {
+    await fetchJson(`https://api.telegram.org/bot${botToken}/setWebhook`, {
+      method: 'POST',
+      provider: 'Telegram',
+      json: {
+        url,
+        secret_token: env.TELEGRAM_WEBHOOK_SECRET,
+        // Same set the poller asks for — the only updates the handler acts on.
+        allowed_updates: ['message', 'edited_message', 'my_chat_member'],
+      },
+    });
+    console.log(`[telegram] webhook registered for ${label}`);
+    return true;
+  } catch (err) {
+    console.warn(`[telegram] could not register the webhook for ${label}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Register the webhook for every connected bot. Run at API boot so bots
+ * connected before registration existed — or under a different secret or
+ * host — start receiving updates without each user reconnecting.
+ */
+export async function registerAllTelegramWebhooks() {
+  if (!telegramWebhookUrl()) return;
+
+  const platformId = await getPlatformId('telegram');
+  const credentials = await prisma.userPlatformCredential.findMany({
+    where: { platformId, isActive: true },
+    select: { userId: true, encryptedToken: true, tokenIv: true, extraInfo: true },
+  });
+
+  // Several users can connect the same bot; one setWebhook per token is enough.
+  const tokens = new Map();
+  for (const credential of credentials) {
+    if (telegramModeOf(credential) === TELEGRAM_MODES.USER) continue;
+    try {
+      const token = decryptToken(credential.encryptedToken, credential.tokenIv);
+      if (!tokens.has(token)) {
+        tokens.set(token, credential.extraInfo?.bot_username ?? `user ${credential.userId}'s bot`);
+      }
+    } catch (err) {
+      console.warn(`[telegram] skipping user ${credential.userId}: token could not be decrypted (${err.message})`);
+    }
+  }
+
+  for (const [token, label] of tokens) {
+    await registerTelegramWebhook(token, label);
+  }
 }
 
 /* ── Telegram as a real user account (MTProto) ────────────────────────── */
