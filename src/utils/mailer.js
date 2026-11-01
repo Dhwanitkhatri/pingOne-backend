@@ -37,6 +37,13 @@ function getTransport() {
     // setting `secure` there makes the connection hang rather than fail.
     secure: env.SMTP_SECURE === undefined ? env.SMTP_PORT === 465 : env.SMTP_SECURE === 'true',
     auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+    // Fail fast instead of nodemailer's default two-minute wait. Some hosts
+    // silently drop SMTP traffic (Render's free tier blocks ports 25, 465 and
+    // 587), and a send that hangs leaves the request that triggered it hanging
+    // past the frontend's 15s timeout with no error anyone can read.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
 
   return transport;
