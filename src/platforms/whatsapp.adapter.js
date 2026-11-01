@@ -14,7 +14,7 @@
 import { BaseAdapter } from './base.adapter.js';
 import { AppError } from '../utils/AppError.js';
 import { env, isWhatsAppTwilioFallbackEnabled } from '../config/env.js';
-import { sendWhatsAppViaTwilio } from './twilio-whatsapp.js';
+import { sendWhatsAppViaTwilio, twilioContentSidFor } from './twilio-whatsapp.js';
 
 // Read from env so connecting (meta.provider.js) and sending agree on one
 // Graph version — they were drifting apart, and a hardcoded version silently
@@ -76,7 +76,7 @@ export class WhatsAppAdapter extends BaseAdapter {
   async send(credential, recipient, message) {
     // A Twilio trial template (it carries a ContentSid) exists only at Twilio;
     // Meta would just reject it, so skip the guaranteed failure.
-    if (message.viaTwilio || message.template?.contentSid) return sendWhatsAppViaTwilio(recipient, message);
+    if (message.viaTwilio || twilioContentSidFor(message.template)) return sendWhatsAppViaTwilio(recipient, message);
     try {
       return await this.#sendViaMeta(credential, recipient, message);
     } catch (err) {

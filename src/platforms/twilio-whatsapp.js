@@ -11,6 +11,16 @@ import { AppError } from '../utils/AppError.js';
 import { env } from '../config/env.js';
 
 /**
+ * The Twilio ContentSid behind a composer-picked template: the one it carries,
+ * or — for a message composed by a frontend that didn't record it — the
+ * TWILIO_WHATSAPP_TEMPLATES entry of the same name. Null for a Meta template.
+ */
+export function twilioContentSidFor(template) {
+  if (!template) return null;
+  return template.contentSid ?? env.TWILIO_WHATSAPP_TEMPLATES.find((t) => t.name === template.name)?.sid ?? null;
+}
+
+/**
  * @param {{ handle: string }} recipient  phone number, "+91…" or bare digits
  * @param {{ formatted: string, template?: object, attachments?: object[] }} message
  *        output of WhatsAppAdapter.formatMessage()
@@ -42,12 +52,13 @@ export async function sendWhatsAppViaTwilio(recipient, message) {
 
   // A Twilio trial template picked in the composer: its own ContentSid, with
   // the values the sender filled in as {{1}}, {{2}}, …
-  if (message.template?.contentSid) {
+  const templateContentSid = twilioContentSidFor(message.template);
+  if (templateContentSid) {
     const values = message.template.parameters ?? [];
     const data = await postMessage(auth, {
       From: from,
       To: to,
-      ContentSid: message.template.contentSid,
+      ContentSid: templateContentSid,
       ...(values.length && {
         ContentVariables: JSON.stringify(
           Object.fromEntries(values.map((value, index) => [index + 1, toTemplateVariable(value)]))
