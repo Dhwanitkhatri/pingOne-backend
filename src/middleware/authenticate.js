@@ -18,6 +18,7 @@
 import { verifyAccessToken } from '../utils/token.js';
 import { prisma } from '../config/prisma.js';
 import { AppError } from '../utils/AppError.js';
+import { isBlockedUntilVerified } from './emailVerification.js';
 
 // `role` is resolved here, on every request, rather than read off the token —
 // so revoking an operator's back-office rights takes effect on their very next
@@ -59,6 +60,14 @@ export async function authenticate(
     if (!user) {
       throw AppError.unauthorized('User no longer exists or is inactive', {
         code: 'USER_INACTIVE',
+      });
+    }
+
+    // Checked here, on every authenticated request, so verifying takes effect
+    // on the very next call. See middleware/emailVerification.js for the rules.
+    if (!user.isVerified && isBlockedUntilVerified(req)) {
+      throw AppError.forbidden('Verify your email address to use this feature. Check your inbox for the link.', {
+        code: 'EMAIL_NOT_VERIFIED',
       });
     }
 

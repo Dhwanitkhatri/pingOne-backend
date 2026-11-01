@@ -1,8 +1,9 @@
 // ============================================================
 // Mailer — transactional email the SERVER sends as itself.
 //
-// Two messages go through here: the password-reset link, and the alert for a
-// delivery that exhausted every retry. Neither has anything to do with the
+// Three messages go through here: the email-verification link, the
+// password-reset link, and the alert for a delivery that exhausted every
+// retry. None of them has anything to do with the
 // Gmail platform adapter — that sends as a CONNECTED USER over OAuth, on
 // behalf of someone who authorised it. This sends as PingOne.
 //
@@ -109,6 +110,25 @@ async function deliver(message) {
   });
 
   console.log(`[mailer] sent "${message.subject}" to ${message.to} (id ${info.messageId})`);
+}
+
+/**
+ * Send the link that confirms a user owns the address they signed up with.
+ * @param {string} to         recipient email
+ * @param {{ firstName: string, verifyUrl: string, ttlHours: number }} details
+ */
+export function sendVerificationEmail(to, { firstName, verifyUrl, ttlHours }) {
+  return deliver({
+    to,
+    subject: 'Verify your PingOne email address',
+    text:
+      `Hi ${firstName},\n\n` +
+      `Please confirm this is your email address to start using PingOne.\n` +
+      `Click the link below to verify it. It expires in ${ttlHours} hours.\n\n` +
+      `${verifyUrl}\n\n` +
+      `Until you verify, you can look around PingOne but can't send messages or connect platforms.\n` +
+      `If you didn't create a PingOne account, you can safely ignore this email.`,
+  });
 }
 
 /**

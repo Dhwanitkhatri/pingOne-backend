@@ -57,6 +57,11 @@ const envSchema = z.object({
   // How long a password-reset link stays valid, in minutes.
   PASSWORD_RESET_TTL_MIN: z.coerce.number().int().positive().default(60),
 
+  // How long an email-verification link stays valid, in hours. Longer than a
+  // reset link: it unlocks nothing an attacker could use, and people often
+  // open the welcome email a day later.
+  EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().int().positive().default(24),
+
   // How long an OAuth `state` value stays valid, in minutes. Short by design:
   // it only has to survive one redirect round-trip.
   OAUTH_STATE_TTL_MIN: z.coerce.number().int().positive().default(10),

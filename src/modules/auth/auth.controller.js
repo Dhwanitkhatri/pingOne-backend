@@ -52,3 +52,18 @@ export const resetPassword = asyncHandler(async (req, res) => {
   await authService.resetPassword(req.body);
   res.status(200).json({ message: 'Your password has been reset. You can now log in.' });
 });
+
+export const verifyEmail = asyncHandler(async (req, res) => {
+  const user = await authService.verifyEmail(req.body);
+  res.status(200).json({ message: 'Your email address is verified.', user });
+});
+
+export const resendVerification = asyncHandler(async (req, res) => {
+  const { alreadyVerified } = await authService.resendVerification(req.user.id);
+  res.status(200).json({
+    message: alreadyVerified
+      ? 'Your email address is already verified.'
+      : 'A new verification link has been sent to your email address.',
+    alreadyVerified,
+  });
+});

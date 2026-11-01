@@ -11,9 +11,14 @@
 
 import { prisma } from '../../config/prisma.js';
 import { hashPassword, verifyPassword } from '../../utils/password.js';
-import { issueTokens, verifyRefreshToken } from '../../utils/token.js';
+import {
+  issueTokens,
+  verifyRefreshToken,
+  issueEmailVerificationToken,
+  verifyEmailVerificationToken,
+} from '../../utils/token.js';
 import { generateToken, sha256Hex } from '../../utils/crypto.js';
-import { sendPasswordResetEmail } from '../../utils/mailer.js';
+import { sendPasswordResetEmail, sendVerificationEmail } from '../../utils/mailer.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
 
@@ -81,8 +86,88 @@ export async function register({ firstName, lastName, email, password }, session
     select: publicUserSelect,
   });
 
+  // Not awaited: an SMTP round-trip shouldn't slow signup down, and a failed
+  // send must not fail it either — the dashboard offers "Resend email".
+  sendVerification(user).catch((err) => {
+    console.error(`[auth] could not send the verification email to ${user.email}: ${err.message}`);
+  });
+
   const tokens = await issueAndPersistTokens(user, session);
   return { user, tokens };
+}
+
+/**
+ * Email a user the link that verifies their address. Throws if the send
+ * fails, so each caller decides whether that matters to the client.
+ * @param {{ id: number, email: string, firstName: string }} user
+ */
+async function sendVerification(user) {
+  const token = issueEmailVerificationToken({ userId: user.id, email: user.email });
+  // The frontend route is /verifyemail — see VerifyEmailCard.jsx.
+  const verifyUrl = `${env.FRONTEND_URL.replace(/\/+$/, '')}/verifyemail?token=${encodeURIComponent(token)}`;
+
+  await sendVerificationEmail(user.email, {
+    firstName: user.firstName,
+    verifyUrl,
+    ttlHours: env.EMAIL_VERIFICATION_TTL_HOURS,
+  });
+}
+
+/**
+ * Send a fresh verification link to a signed-in user. Unlike the reset flow
+ * there is nothing to enumerate here — the caller is authenticated — so a
+ * failed send is reported instead of swallowed.
+ * @returns {Promise<{ alreadyVerified: boolean }>}
+ */
+export async function resendVerification(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, firstName: true, isVerified: true },
+  });
+  if (!user) throw AppError.notFound('User not found');
+
+  if (user.isVerified) return { alreadyVerified: true };
+
+  try {
+    await sendVerification(user);
+  } catch (err) {
+    console.error(`[auth] could not resend the verification email to ${user.email}: ${err.message}`);
+    throw new AppError(503, "We couldn't send the verification email right now. Please try again shortly.", {
+      code: 'EMAIL_SEND_FAILED',
+    });
+  }
+
+  return { alreadyVerified: false };
+}
+
+/**
+ * Consume a verification link. Idempotent: opening the link twice, or after
+ * verifying some other way, still succeeds.
+ * @returns {Promise<object>} the public user, now verified
+ */
+export async function verifyEmail({ token }) {
+  const { userId, email } = verifyEmailVerificationToken(token);
+
+  const user = await prisma.user.findFirst({
+    where: { id: userId, isActive: true, deletedAt: null },
+    select: publicUserSelect,
+  });
+
+  // A link issued for an address the account no longer has proves nothing
+  // about the current one.
+  if (!user || user.email !== email) {
+    throw AppError.badRequest('This verification link is invalid or has expired', {
+      code: 'INVALID_VERIFICATION_TOKEN',
+    });
+  }
+
+  if (user.isVerified) return user;
+
+  return prisma.user.update({
+    where: { id: user.id },
+    data: { isVerified: true },
+    select: publicUserSelect,
+  });
 }
 
 /** Authenticate with email + password. */

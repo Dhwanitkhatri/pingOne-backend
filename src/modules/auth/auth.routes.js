@@ -7,6 +7,8 @@
 //   POST /refresh          — rotate a refresh token -> new pair
 //   POST /forgot-password  — email a reset link
 //   POST /reset-password   — consume the link, set a new password
+//   POST /verify-email     — consume the emailed link, mark the address verified
+//   POST /resend-verification — email a fresh verification link (protected)
 //   GET  /me               — current user (protected)
 //
 // The OAuth provider routes (/auth/google, /auth/meta) live in the
@@ -28,6 +30,7 @@ import {
   refreshSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  verifyEmailSchema,
 } from './auth.schema.js';
 
 const router = Router();
@@ -38,6 +41,18 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: { message: 'Too many attempts, please try again later', code: 'RATE_LIMITED' } },
+});
+
+// Each resend is a real email, so this is tighter than authLimiter — enough
+// for "it went to spam, send another" without letting a script flood an inbox.
+const resendLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: { message: 'Too many verification emails requested, please try again later', code: 'RATE_LIMITED' },
+  },
 });
 
 router.post('/signup', authLimiter, validate({ body: signupSchema }), authController.signup);
@@ -71,6 +86,16 @@ router.post(
   validate({ body: resetPasswordSchema }),
   authController.resetPassword
 );
+
+// Public: the link is opened from an inbox, often on a device with no session.
+router.post(
+  '/verify-email',
+  authLimiter,
+  validate({ body: verifyEmailSchema }),
+  authController.verifyEmail
+);
+
+router.post('/resend-verification', resendLimiter, authenticate, authController.resendVerification);
 
 router.get('/me', authenticate, authController.me);
 

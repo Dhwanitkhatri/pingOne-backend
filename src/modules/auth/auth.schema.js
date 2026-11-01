@@ -49,3 +49,7 @@ export const resetPasswordSchema = z.object({
   token: z.string().trim().min(1, 'token is required'),
   password, // same strength rules as signup
 });
+
+export const verifyEmailSchema = z.object({
+  token: z.string().trim().min(1, 'token is required'),
+});

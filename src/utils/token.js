@@ -112,3 +112,48 @@ export function verifyOAuthState(state, expectedPlatform) {
 
   return { userId: payload.sub };
 }
+
+// ---- Email verification ------------------------------------------
+// Like the OAuth state, the link must prove which user it belongs to without
+// a database table. Unlike it, it travels by email and lives for a day, so it
+// is signed with its own key, derived from the access secret. Signing it with
+// JWT_ACCESS_SECRET itself would let a leaked link double as a day-long access
+// token, because verifyAccessToken only checks the signature. `email` is
+// pinned so the link dies if the account's address ever changes.
+
+const EMAIL_VERIFY_TYP = 'email_verify';
+const EMAIL_VERIFY_SECRET = crypto
+  .createHmac('sha256', env.JWT_ACCESS_SECRET)
+  .update('pingone:email-verification')
+  .digest('hex');
+
+/**
+ * @param {{ userId: number, email: string }} params
+ * @returns {string} signed token for the emailed link
+ */
+export function issueEmailVerificationToken({ userId, email }) {
+  return jwt.sign({ sub: userId, email, typ: EMAIL_VERIFY_TYP }, EMAIL_VERIFY_SECRET, {
+    expiresIn: `${env.EMAIL_VERIFICATION_TTL_HOURS}h`,
+  });
+}
+
+/**
+ * @param {string} token
+ * @returns {{ userId: number, email: string }}
+ */
+export function verifyEmailVerificationToken(token) {
+  const invalid = AppError.badRequest('This verification link is invalid or has expired', {
+    code: 'INVALID_VERIFICATION_TOKEN',
+  });
+
+  let payload;
+  try {
+    payload = jwt.verify(token, EMAIL_VERIFY_SECRET);
+  } catch {
+    throw invalid;
+  }
+
+  if (payload.typ !== EMAIL_VERIFY_TYP) throw invalid;
+
+  return { userId: payload.sub, email: payload.email };
+}
