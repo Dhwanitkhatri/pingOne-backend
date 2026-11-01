@@ -316,7 +316,10 @@ export async function listMessages({
           select: {
             id: true,
             user: { select: { id: true, firstName: true, lastName: true, email: true } },
-            message: { select: { id: true, subject: true, content: true } },
+            // Never the subject or body: what a user wrote is theirs. Support
+            // works from delivery metadata (status, error, provider id, times)
+            // — kept out at the query so it can't leak through the API either.
+            message: { select: { id: true } },
           },
         },
       },
