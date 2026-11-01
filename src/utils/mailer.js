@@ -174,6 +174,23 @@ export function sendDigestEmail(to, { firstName, frequency, since, until, stats 
     .map(([name, count]) => `  - ${name}: ${count}`)
     .join('\n');
 
+  // Only an on-demand summary can be empty — the scheduler skips those.
+  if (stats.total === 0) {
+    return deliver({
+      to,
+      subject: `Your ${label} PingOne summary`,
+      text: [
+        `Hi ${firstName},`,
+        '',
+        `Here's your ${label} PingOne summary for ${day(since)} – ${day(until)}.`,
+        '',
+        "You didn't send any messages in this period.",
+        '',
+        'You can change or turn off this summary in Settings → Notifications.',
+      ].join('\n'),
+    });
+  }
+
   const lines = [
     `Hi ${firstName},`,
     '',

@@ -3,6 +3,7 @@
 //
 //   GET   /users/preferences   read notification preferences
 //   PUT   /users/preferences   update them (PATCH is accepted too)
+//   POST  /users/digest/send-now  email the last 7 days' summary right away
 //   PATCH /users/profile        update first/last name
 //   PUT   /users/password       change password (while signed in)
 //   DELETE /users/me            permanently close the account
@@ -11,6 +12,7 @@
 // ============================================================
 
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import * as controller from './users.controller.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { validate } from '../../middleware/validate.js';
@@ -36,6 +38,19 @@ router.patch(
   validate({ body: updatePreferencesSchema }),
   controller.updatePreferences
 );
+
+// Each press is a real email, so keep it to a handful per quarter-hour.
+const digestNowLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: { message: 'Too many summary emails requested, please try again later', code: 'RATE_LIMITED' },
+  },
+});
+
+router.post('/digest/send-now', digestNowLimiter, controller.sendDigestNow);
 
 router.patch(
   '/profile',

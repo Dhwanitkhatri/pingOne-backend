@@ -14,6 +14,7 @@
 import { prisma } from '../../config/prisma.js';
 import { sendDigestEmail } from '../../utils/mailer.js';
 import { MESSAGE_STATUS } from '../../constants/codes.js';
+import { AppError } from '../../utils/AppError.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -92,6 +93,41 @@ export async function sendDueDigests(now = new Date()) {
     console.log(`[digest] sent ${summary.sent}, failed ${summary.failed}, empty ${summary.skipped}`);
   }
   return summary;
+}
+
+/**
+ * "Send now" from Settings: email the last 7 days' summary immediately.
+ *
+ * Deliberately leaves lastDigestSentAt alone — it's an extra copy on demand,
+ * not the scheduled one, so the regular weekly email still arrives on time.
+ * Unlike the scheduler it also sends for an empty week: the user asked for
+ * it, and silence would look like the button didn't work.
+ *
+ * @returns {Promise<{ email: string, messages: number, total: number }>}
+ */
+export async function sendDigestNow(userId, now = new Date()) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, firstName: true, isVerified: true },
+  });
+  if (!user) throw AppError.notFound('User not found');
+  if (!user.isVerified) {
+    throw AppError.forbidden('Verify your email before requesting a summary.', { code: 'EMAIL_NOT_VERIFIED' });
+  }
+
+  const since = new Date(now - DIGEST_PERIOD_MS.weekly);
+  const stats = await collectStats(userId, since, now);
+
+  try {
+    await sendDigestEmail(user.email, { firstName: user.firstName, frequency: 'weekly', since, until: now, stats });
+  } catch (err) {
+    console.error(`[digest] on-demand summary for user ${userId} could not be sent: ${err.message}`);
+    throw new AppError(503, "We couldn't send the summary email right now. Please try again later.", {
+      code: 'EMAIL_SEND_FAILED',
+    });
+  }
+
+  return { email: user.email, messages: stats.messages, total: stats.total };
 }
 
 /**
