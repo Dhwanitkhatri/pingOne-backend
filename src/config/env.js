@@ -115,6 +115,22 @@ const envSchema = z.object({
   ),
   TWILIO_AUTH_TOKEN: optional(z.string().trim().min(10).optional()),
 
+  // ---- WhatsApp delivery route -------------------------------------
+  // 'meta' sends through the connected user's Cloud API credential. 'twilio'
+  // keeps that connection as-is but delivers every WhatsApp message through
+  // Twilio's WhatsApp sender, signed with TWILIO_ACCOUNT_SID/AUTH_TOKEN above.
+  // The Twilio Sandbox needs no Meta business verification or payment method;
+  // each recipient must first send "join <code>" to the sandbox number.
+  WHATSAPP_PROVIDER: optional(z.enum(['meta', 'twilio']).optional()).default('meta'),
+  // E.164 sender. Defaults to Twilio's shared WhatsApp Sandbox number.
+  TWILIO_WHATSAPP_FROM: optional(
+    z
+      .string()
+      .trim()
+      .regex(/^\+[1-9]\d{6,14}$/, 'TWILIO_WHATSAPP_FROM must be E.164, e.g. +14155238886')
+      .optional()
+  ).default('+14155238886'),
+
   // ---- Outbound email (SMTP) --------------------------------------
   // Transactional mail the SERVER sends as itself: password-reset links and
   // permanent-failure alerts. Nothing to do with the Gmail platform adapter,
