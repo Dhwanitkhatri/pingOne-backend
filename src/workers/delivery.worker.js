@@ -166,9 +166,14 @@ async function processDeliveryJob(job) {
       toCode: MESSAGE_STATUS.SENT,
       changedBy: CHANGED_BY.SYSTEM,
       errorReason: null,
-      // retryCount resets so a delivery that eventually succeeded doesn't look
-      // like it's still mid-retry.
-      data: { platformMessageId: result.platformMessageId, retryCount: 0 },
+      // retryCount is deliberately NOT reset here. "Sent" only means the
+      // platform accepted it, and Meta can still fail it afterwards by webhook
+      // (which re-sends through Twilio). Resetting on every acceptance kept
+      // the count at 1, so each failure waited the first 30s backoff again and
+      // the delivery looped forever instead of climbing 30s -> 2m -> 10m and
+      // stopping. It counts failed attempts across the delivery's whole life;
+      // only an admin's manual re-queue starts it over.
+      data: { platformMessageId: result.platformMessageId },
     });
   } catch (err) {
     await handleFailure(delivery, err, { viaTwilio });
