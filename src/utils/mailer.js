@@ -19,6 +19,7 @@
 
 import nodemailer from 'nodemailer';
 import { env, isProd, isSmtpConfigured } from '../config/env.js';
+import { button, countList, detailsPanel, paragraph, renderEmail, statTiles } from './emailTemplate.js';
 
 /**
  * Built once and reused — nodemailer pools connections, and rebuilding the
@@ -88,7 +89,9 @@ function mailFrom() {
  * see the note in requestPasswordReset about why it deliberately doesn't turn
  * into a 500.
  *
- * @param {{ to: string, subject: string, text: string }} message
+ * @param {{ to: string, subject: string, text: string, html?: string }} message
+ *   `text` is always sent too: it's what plain-text clients and spam filters
+ *   read, and what the dev console prints.
  */
 async function deliver(message) {
   if (!isSmtpConfigured) {
@@ -114,10 +117,14 @@ async function deliver(message) {
     to: message.to,
     subject: message.subject,
     text: message.text,
+    ...(message.html ? { html: message.html } : {}),
   });
 
   console.log(`[mailer] sent "${message.subject}" to ${message.to} (id ${info.messageId})`);
 }
+
+/** A page of the web app, for links inside emails. */
+const appUrl = (path) => `${env.FRONTEND_URL.replace(/\/+$/, '')}${path}`;
 
 /**
  * Send the link that confirms a user owns the address they signed up with.
@@ -135,6 +142,20 @@ export function sendVerificationEmail(to, { firstName, verifyUrl, ttlHours }) {
       `${verifyUrl}\n\n` +
       `Until you verify, you can look around PingOne but can't send messages or connect platforms.\n` +
       `If you didn't create a PingOne account, you can safely ignore this email.`,
+    html: renderEmail({
+      preheader: `Confirm your email to start sending with PingOne. The link expires in ${ttlHours} hours.`,
+      heading: 'Verify your email address',
+      body: [
+        paragraph(`Hi ${firstName},`),
+        paragraph('Welcome to PingOne! Please confirm this is your email address to start sending messages.'),
+        button('Verify email address', verifyUrl),
+        paragraph(
+          `This link expires in ${ttlHours} hours. Until you verify, you can look around PingOne but can't send messages or connect platforms.`,
+          { muted: true, size: 13 }
+        ),
+      ],
+      footer: "If you didn't create a PingOne account, you can safely ignore this email.",
+    }),
   });
 }
 
@@ -153,6 +174,16 @@ export function sendPasswordResetEmail(to, resetUrl, ttlMin) {
       `Click the link below to choose a new password. It expires in ${ttlMin} minutes.\n\n` +
       `${resetUrl}\n\n` +
       `If you didn't request this, you can safely ignore this email — your password won't change.`,
+    html: renderEmail({
+      preheader: `Choose a new PingOne password. The link expires in ${ttlMin} minutes.`,
+      heading: 'Reset your password',
+      body: [
+        paragraph('We received a request to reset the password for your PingOne account.'),
+        button('Choose a new password', resetUrl),
+        paragraph(`This link expires in ${ttlMin} minutes and can only be used once.`, { muted: true, size: 13 }),
+      ],
+      footer: "If you didn't request this, you can safely ignore this email — your password won't change.",
+    }),
   });
 }
 
@@ -174,6 +205,10 @@ export function sendDigestEmail(to, { firstName, frequency, since, until, stats 
     .map(([name, count]) => `  - ${name}: ${count}`)
     .join('\n');
 
+  const period = `${day(since)} – ${day(until)}`;
+  const heading = `Your ${label} summary`;
+  const settingsNote = 'You can change or turn off this summary in Settings → Notifications.';
+
   // Only an on-demand summary can be empty — the scheduler skips those.
   if (stats.total === 0) {
     return deliver({
@@ -182,12 +217,23 @@ export function sendDigestEmail(to, { firstName, frequency, since, until, stats 
       text: [
         `Hi ${firstName},`,
         '',
-        `Here's your ${label} PingOne summary for ${day(since)} – ${day(until)}.`,
+        `Here's your ${label} PingOne summary for ${period}.`,
         '',
         "You didn't send any messages in this period.",
         '',
-        'You can change or turn off this summary in Settings → Notifications.',
+        settingsNote,
       ].join('\n'),
+      html: renderEmail({
+        preheader: `No messages sent ${period}.`,
+        heading,
+        body: [
+          paragraph(`Hi ${firstName},`),
+          paragraph(`Here's your PingOne summary for ${period}.`),
+          paragraph("You didn't send any messages in this period.", { muted: true }),
+          button('Write a message', appUrl('/dashboard')),
+        ],
+        footer: settingsNote,
+      }),
     });
   }
 
@@ -208,13 +254,45 @@ export function sendDigestEmail(to, { firstName, frequency, since, until, stats 
     ...(stats.failed
       ? ['Open Message History in PingOne to see why the failed ones didn\'t go through.', '']
       : []),
-    'You can change or turn off this summary in Settings → Notifications.',
+    settingsNote,
   ];
+
+  const platformRows = Object.entries(stats.byPlatform)
+    .sort(([, a], [, b]) => b - a)
+    .map(([name, count]) => [name, String(count)]);
 
   return deliver({
     to,
     subject: `Your ${label} PingOne summary`,
     text: lines.join('\n'),
+    html: renderEmail({
+      preheader: `${plural(stats.messages, 'message')} to ${plural(stats.total, 'recipient')} · ${stats.delivered} delivered · ${stats.failed} failed`,
+      heading,
+      body: [
+        paragraph(`Hi ${firstName},`),
+        paragraph(
+          `Here's your PingOne summary for ${period}. You sent ${plural(stats.messages, 'message')} to ${plural(stats.total, 'recipient')}.`
+        ),
+        statTiles([
+          { label: 'Delivered or read', value: stats.delivered, tone: 'good' },
+          { label: 'Sent, unconfirmed', value: stats.sent },
+          { label: 'Failed', value: stats.failed, tone: stats.failed ? 'danger' : undefined },
+          ...(stats.inProgress ? [{ label: 'In progress', value: stats.inProgress }] : []),
+        ]),
+        countList('By platform', platformRows),
+        ...(stats.failed
+          ? [
+              paragraph("Some messages didn't go through — Message History shows the reason for each one."),
+              button('Open Message History', appUrl('/dashboard/history')),
+            ]
+          : [button('Open PingOne', appUrl('/dashboard'))]),
+        paragraph(
+          '"Sent, unconfirmed" means the platform accepted the message but hasn\'t reported delivery. Gmail and Telegram bots never send delivery reports.',
+          { muted: true, size: 12 }
+        ),
+      ],
+      footer: settingsNote,
+    }),
   });
 }
 
@@ -227,5 +305,27 @@ export function sendPermanentFailureEmail(to, { contactName, platform, attempts,
       `A message to ${contactName} on ${platform} could not be sent after ${attempts} attempt(s).\n\n` +
       `Reason: ${reason}\n\n` +
       'The recipient was not sent another copy. Review the contact address and platform connection before scheduling again.',
+    html: renderEmail({
+      preheader: `A message to ${contactName} on ${platform} couldn't be delivered.`,
+      heading: 'A message couldn\'t be delivered',
+      body: [
+        paragraph(`We tried ${attempts} time${attempts === 1 ? '' : 's'} but couldn't deliver your message.`),
+        detailsPanel(
+          [
+            ['Recipient', contactName],
+            ['Platform', platform],
+            ['Attempts', String(attempts)],
+            ['Reason', reason],
+          ],
+          { tone: 'danger' }
+        ),
+        paragraph(
+          "The recipient didn't receive it, and we won't retry again. Check the contact's details and the platform connection, then send it again.",
+          { muted: true, size: 14 }
+        ),
+        button('Open Message History', appUrl('/dashboard/history')),
+      ],
+      footer: 'You get this because Delivery notifications is on in Settings → Notifications.',
+    }),
   });
 }
