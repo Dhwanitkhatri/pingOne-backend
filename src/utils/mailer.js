@@ -156,6 +156,51 @@ export function sendPasswordResetEmail(to, resetUrl, ttlMin) {
   });
 }
 
+const DIGEST_LABELS = { daily: 'daily', weekly: 'weekly', monthly: 'monthly' };
+
+/**
+ * The summary email ("Weekly summary" in Settings).
+ * @param {string} to
+ * @param {{ firstName: string, frequency: string, since: Date, until: Date,
+ *   stats: { messages: number, total: number, delivered: number, sent: number,
+ *            failed: number, inProgress: number, byPlatform: Record<string, number> } }} details
+ */
+export function sendDigestEmail(to, { firstName, frequency, since, until, stats }) {
+  const day = (date) => date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const label = DIGEST_LABELS[frequency] ?? frequency;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const platforms = Object.entries(stats.byPlatform)
+    .sort(([, a], [, b]) => b - a)
+    .map(([name, count]) => `  - ${name}: ${count}`)
+    .join('\n');
+
+  const lines = [
+    `Hi ${firstName},`,
+    '',
+    `Here's your ${label} PingOne summary for ${day(since)} – ${day(until)}.`,
+    '',
+    `You sent ${plural(stats.messages, 'message')} to ${plural(stats.total, 'recipient')}:`,
+    `  - Delivered or read: ${stats.delivered}`,
+    `  - Sent (no delivery confirmation yet): ${stats.sent}`,
+    `  - Failed: ${stats.failed}`,
+    ...(stats.inProgress ? [`  - Still in progress: ${stats.inProgress}`] : []),
+    '',
+    'By platform:',
+    platforms,
+    '',
+    ...(stats.failed
+      ? ['Open Message History in PingOne to see why the failed ones didn\'t go through.', '']
+      : []),
+    'You can change or turn off this summary in Settings → Notifications.',
+  ];
+
+  return deliver({
+    to,
+    subject: `Your ${label} PingOne summary`,
+    text: lines.join('\n'),
+  });
+}
+
 /** Send an operational alert for a delivery that exhausted every retry. */
 export function sendPermanentFailureEmail(to, { contactName, platform, attempts, reason }) {
   return deliver({

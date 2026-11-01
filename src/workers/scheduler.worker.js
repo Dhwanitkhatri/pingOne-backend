@@ -22,8 +22,15 @@ import { fireJob, FIRE_JOB_INCLUDE } from '../modules/scheduler/dispatch.js';
 import { lookupByCode } from '../utils/lookupCache.js';
 import { MESSAGE_STATUS } from '../constants/codes.js';
 import { workerManager } from '../utils/worker-manager.js';
+import { sendDueDigests } from '../modules/notifications/digest.service.js';
 
 const TICK_INTERVAL_MS = 60_000; // check every minute — adjust if you need finer-grained scheduling
+
+// Summary emails are due at day granularity, so checking every tick would be
+// a wasted query a minute; a quarter-hour is plenty. Starts at 0 so the
+// first tick after boot checks straight away.
+const DIGEST_CHECK_INTERVAL_MS = 15 * 60_000;
+let lastDigestCheck = 0;
 
 let schedulerIntervalId = null;
 let isRunning = false;
@@ -85,5 +92,16 @@ async function runTick() {
     // A tick failing should never crash the worker process — log and retry next tick.
     console.error('[scheduler] tick failed:', err);
     workerManager.recordJobFailed('scheduler');
+  }
+
+  // Separate from the job loop above, so a mail problem can't hold up
+  // scheduled sends and a failed send tick can't skip the digests.
+  if (isRunning && Date.now() - lastDigestCheck >= DIGEST_CHECK_INTERVAL_MS) {
+    lastDigestCheck = Date.now();
+    try {
+      await sendDueDigests();
+    } catch (err) {
+      console.error('[scheduler] digest check failed:', err.message);
+    }
   }
 }
