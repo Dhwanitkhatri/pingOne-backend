@@ -18,6 +18,7 @@ import {
   verifyMetaSignature,
   verifyMetaSubscription,
   verifyTelegramSecret,
+  verifyTwilioSignature,
 } from './signature.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
@@ -41,6 +42,27 @@ export const receiveWhatsAppWebhook = asyncHandler(async (req, res) => {
     `[webhook:whatsapp] processed=${summary.processed} ignored=${summary.ignored} unmatched=${summary.unmatched}`
   );
   res.status(200).json({ received: true, ...summary });
+});
+
+/** POST /webhooks/twilio/status — delivered / read / failed for a message we sent. */
+export const receiveTwilioStatus = asyncHandler(async (req, res) => {
+  await verifyTwilioSignature(req);
+
+  const result = await webhookService.handleTwilioStatus(req.body);
+  console.log(`[webhook:twilio] ${req.body.MessageSid} ${req.body.MessageStatus} -> ${result}`);
+  res.status(200).json({ received: true, result });
+});
+
+/**
+ * POST /webhooks/twilio/inbound — a reply to one of our Twilio numbers.
+ * Answers with empty TwiML so Twilio sends nothing back to the person.
+ */
+export const receiveTwilioInbound = asyncHandler(async (req, res) => {
+  await verifyTwilioSignature(req);
+
+  const result = await webhookService.handleTwilioInbound(req.body);
+  console.log(`[webhook:twilio] inbound ${String(req.body.From ?? '').startsWith('whatsapp:') ? 'whatsapp' : 'sms'} -> ${result}`);
+  res.status(200).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
 });
 
 /** POST /webhooks/telegram — Telegram Bot API updates. */

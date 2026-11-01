@@ -6,6 +6,7 @@
 
 import { BaseAdapter } from './base.adapter.js';
 import { AppError } from '../utils/AppError.js';
+import { twilioStatusCallbackUrl } from './twilio-callbacks.js';
 
 export class SmsAdapter extends BaseAdapter {
   static code = 'sms';
@@ -44,6 +45,9 @@ export class SmsAdapter extends BaseAdapter {
       To: recipient.handle, // E.164 phone number
       Body: message.formatted,
     });
+    // Delivered / undelivered arrive later at this URL (see twilio-callbacks.js).
+    const statusCallback = twilioStatusCallbackUrl();
+    if (statusCallback) params.append('StatusCallback', statusCallback);
 
     // Twilio is the one platform that won't take the bytes — MMS media is
     // fetched by Twilio over the public internet from the URL we hand it. That

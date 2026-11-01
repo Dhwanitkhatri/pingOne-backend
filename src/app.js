@@ -16,12 +16,18 @@ import apiRoutes from './api/routes.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/requestLogger.js';
+import { clientIp } from './middleware/clientIp.js';
 import { uploadRoot } from './utils/fileStorage.js';
 
 const app = express();
 
 // Behind a reverse proxy (nginx, Render, etc.) so rate-limit & IPs work.
 app.set('trust proxy', 1);
+
+// Render adds more proxy hops than `trust proxy: 1` peels off; this restores
+// the visitor's own address from Cloudflare's header. Must run before any
+// rate limiter or route reads req.ip.
+app.use(clientIp);
 
 // Security headers.
 // crossOriginResourcePolicy is relaxed to cross-origin so the frontend (and

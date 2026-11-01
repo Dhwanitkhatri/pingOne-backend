@@ -15,14 +15,23 @@
 //                  `secret_token` that Telegram echoes in a header on every
 //                  update, so we compare that.
 //
+//   Twilio         X-Twilio-Signature: HMAC-SHA1 over the full URL it called
+//                  plus the sorted POST params, keyed with the AUTH TOKEN of
+//                  the account that sent the message — the server's own for
+//                  WhatsApp-via-Twilio, a user's stored one for their SMS.
+//                  Checked with the official `twilio` helper.
+//
 // Comparisons use timingSafeEqual. A plain === leaks how much of a candidate
 // signature was correct through response timing, which is enough to forge one
 // byte at a time.
 // ============================================================
 
 import crypto from 'node:crypto';
+import twilio from 'twilio';
 import { AppError } from '../../utils/AppError.js';
 import { env } from '../../config/env.js';
+import { prisma } from '../../config/prisma.js';
+import { decryptToken } from '../../utils/crypto.js';
 
 /**
  * Verify Meta's X-Hub-Signature-256 against the raw request body.
@@ -106,6 +115,44 @@ export function verifyTelegramSecret(req) {
   }
 
   return true;
+}
+
+/**
+ * Verify Twilio's X-Twilio-Signature (status callbacks and inbound messages).
+ *
+ * The URL must be byte-for-byte the one Twilio called. Behind Render's proxy
+ * req.protocol/host aren't trustworthy, so it's rebuilt from PUBLIC_BASE_URL —
+ * the same base twilioStatusCallbackUrl() hands Twilio in the first place.
+ *
+ * @throws {AppError} 401 if the header is missing, 403 if it doesn't match
+ */
+export async function verifyTwilioSignature(req) {
+  const signature = req.get('X-Twilio-Signature');
+  if (!signature) {
+    throw AppError.unauthorized('Missing X-Twilio-Signature header', { code: 'WEBHOOK_SIGNATURE_MISSING' });
+  }
+
+  const authToken = await twilioAuthTokenFor(req.body?.AccountSid);
+  const url = `${env.PUBLIC_BASE_URL.replace(/\/+$/, '')}${req.originalUrl}`;
+
+  if (!authToken || !twilio.validateRequest(authToken, signature, url, req.body ?? {})) {
+    throw AppError.forbidden('Twilio webhook signature does not match', { code: 'WEBHOOK_SIGNATURE_INVALID' });
+  }
+  return true;
+}
+
+/** The auth token of the Twilio account a callback is about, or null if it isn't one of ours. */
+async function twilioAuthTokenFor(accountSid) {
+  if (!accountSid) return null;
+  if (accountSid === env.TWILIO_ACCOUNT_SID) return env.TWILIO_AUTH_TOKEN ?? null;
+
+  // A user's own Twilio account, connected for SMS: their token is stored
+  // encrypted, keyed by the account sid kept alongside it.
+  const credential = await prisma.userPlatformCredential.findFirst({
+    where: { platform: { code: 'sms' }, extraInfo: { path: ['account_sid'], equals: accountSid } },
+    select: { encryptedToken: true, tokenIv: true },
+  });
+  return credential ? decryptToken(credential.encryptedToken, credential.tokenIv) : null;
 }
 
 /**

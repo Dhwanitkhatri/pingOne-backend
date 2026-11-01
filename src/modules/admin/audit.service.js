@@ -22,7 +22,6 @@ export const AUDIT_ACTION = Object.freeze({
   USER_SUSPEND: 'user.suspend',
   USER_REACTIVATE: 'user.reactivate',
   USER_ROLE_CHANGE: 'user.role_change',
-  USER_DELETE: 'user.delete',
   MESSAGE_RETRY: 'message.retry',
   PLATFORM_ENABLE: 'platform.enable',
   PLATFORM_DISABLE: 'platform.disable',

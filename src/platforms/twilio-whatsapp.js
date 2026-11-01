@@ -9,6 +9,7 @@
 
 import { AppError } from '../utils/AppError.js';
 import { env } from '../config/env.js';
+import { twilioStatusCallbackUrl } from './twilio-callbacks.js';
 
 /**
  * The Twilio ContentSid behind a composer-picked template: the one it carries,
@@ -99,6 +100,9 @@ function toTemplateVariable(text) {
 
 async function postMessage({ accountSid, authToken }, fields, attachment) {
   const params = new URLSearchParams(fields);
+  // Delivered / read / failed arrive later at this URL (see twilio-callbacks.js).
+  const statusCallback = twilioStatusCallbackUrl();
+  if (statusCallback) params.append('StatusCallback', statusCallback);
   // Twilio fetches media from this URL itself, so PUBLIC_BASE_URL must be public.
   if (attachment) params.append('MediaUrl', attachment.fileUrl);
 

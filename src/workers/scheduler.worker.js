@@ -23,6 +23,7 @@ import { lookupByCode } from '../utils/lookupCache.js';
 import { MESSAGE_STATUS } from '../constants/codes.js';
 import { workerManager } from '../utils/worker-manager.js';
 import { sendDueDigests } from '../modules/notifications/digest.service.js';
+import { syncTelegramReadReceipts } from '../modules/deliveries/telegram-read-receipts.js';
 
 const TICK_INTERVAL_MS = 60_000; // check every minute — adjust if you need finer-grained scheduling
 
@@ -31,6 +32,12 @@ const TICK_INTERVAL_MS = 60_000; // check every minute — adjust if you need fi
 // first tick after boot checks straight away.
 const DIGEST_CHECK_INTERVAL_MS = 15 * 60_000;
 let lastDigestCheck = 0;
+
+// Telegram user-account read ticks are polled (nothing listens between
+// sends). Every 3 minutes keeps "Read" timely without hammering Telegram,
+// which rate-limits the per-chat lookups this makes.
+const TELEGRAM_READ_INTERVAL_MS = 3 * 60_000;
+let lastTelegramReadSync = 0;
 
 let schedulerIntervalId = null;
 let isRunning = false;
@@ -102,6 +109,15 @@ async function runTick() {
       await sendDueDigests();
     } catch (err) {
       console.error('[scheduler] digest check failed:', err.message);
+    }
+  }
+
+  if (isRunning && Date.now() - lastTelegramReadSync >= TELEGRAM_READ_INTERVAL_MS) {
+    lastTelegramReadSync = Date.now();
+    try {
+      await syncTelegramReadReceipts();
+    } catch (err) {
+      console.error('[scheduler] Telegram read-receipt sync failed:', err.message);
     }
   }
 }

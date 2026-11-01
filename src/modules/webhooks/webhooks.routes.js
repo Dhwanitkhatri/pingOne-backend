@@ -5,6 +5,8 @@
 // GET   /webhooks/whatsapp    Meta subscription handshake (hub.challenge)
 // POST  /webhooks/whatsapp    Meta Cloud API status callbacks
 // POST  /webhooks/telegram    Telegram Bot API updates
+// POST  /webhooks/twilio/status   Twilio delivered/read/failed callbacks
+// POST  /webhooks/twilio/inbound  replies to our Twilio WhatsApp/SMS numbers
 //
 // There is deliberately no `authenticate` on this router: the callers are
 // Meta's and Telegram's servers, which have no PingOne session. Authentication
@@ -23,6 +25,12 @@
 //                "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 //                -d "url=https://<host>/api/v1/webhooks/telegram" \
 //                -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+//
+//   Twilio     Status callbacks need no setup — every send passes
+//              StatusCallback=https://<host>/api/v1/webhooks/twilio/status.
+//              For replies, set "A message comes in" (number / WhatsApp
+//              sender / Sandbox settings) to
+//              https://<host>/api/v1/webhooks/twilio/inbound  (HTTP POST)
 //
 // Locally, point both at a tunnel (`ngrok http 4000`) — the platforms need to
 // reach the endpoint from the public internet.
@@ -57,5 +65,10 @@ router.post('/whatsapp', webhookController.receiveWhatsAppWebhook);
 
 // Telegram
 router.post('/telegram', webhookController.receiveTelegramWebhook);
+
+// Twilio — status callbacks are requested per message (StatusCallback);
+// inbound replies need the URL set once in the Twilio console (see top).
+router.post('/twilio/status', webhookController.receiveTwilioStatus);
+router.post('/twilio/inbound', webhookController.receiveTwilioInbound);
 
 export default router;

@@ -54,10 +54,32 @@ export async function login({ email, password }, session = {}) {
     throw invalid;
   }
 
+  // Failed attempts on a real account are the events an audit trail exists
+  // for (password guessing, a suspended operator trying to get back in), so
+  // they're recorded too. Not awaited: an extra DB write only on this branch
+  // would make "wrong password" measurably slower than "no such account" and
+  // undo DUMMY_HASH's timing cover. An unknown email has no account to file
+  // the row under (adminId is required), so that case stays unlogged.
+  const deny = (reason) =>
+    void audit.record(
+      {
+        adminId: user.id,
+        action: AUDIT_ACTION.LOGIN_DENIED,
+        targetType: 'system',
+        targetLabel: user.email,
+        metadata: { reason, role: user.role },
+      },
+      session
+    );
+
   const ok = await verifyPassword(password, user.passwordHash);
-  if (!ok) throw invalid;
+  if (!ok) {
+    deny('INVALID_PASSWORD');
+    throw invalid;
+  }
 
   if (!user.isActive || user.deletedAt) {
+    deny('ACCOUNT_DISABLED');
     throw AppError.forbidden('This account is disabled', { code: 'ACCOUNT_DISABLED' });
   }
 
@@ -65,17 +87,7 @@ export async function login({ email, password }, session = {}) {
   // hits here from a valid customer account is the signature of someone
   // walking the admin surface with a password they legitimately hold.
   if (!isAdminRole(user.role)) {
-    await audit.record(
-      {
-        adminId: user.id,
-        action: AUDIT_ACTION.LOGIN_DENIED,
-        targetType: 'system',
-        targetLabel: user.email,
-        metadata: { reason: 'INSUFFICIENT_ROLE', role: user.role },
-      },
-      session
-    );
-
+    deny('INSUFFICIENT_ROLE');
     throw AppError.forbidden("This account doesn't have admin access.", {
       code: 'ADMIN_ACCESS_REQUIRED',
     });

@@ -151,6 +151,107 @@ function describeMetaErrors(errors) {
   return errors.map((e) => `${e.title ?? e.code ?? 'error'}: ${e.message ?? e.details ?? ''}`.trim()).join('; ');
 }
 
+// ---- Twilio (WhatsApp-via-Twilio and SMS) ---------------------------
+
+/** Twilio's MessageStatus -> our codes. queued/accepted/sending say nothing new. */
+const TWILIO_STATUS_MAP = {
+  sent: MESSAGE_STATUS.SENT,
+  delivered: MESSAGE_STATUS.DELIVERED,
+  read: MESSAGE_STATUS.READ, // WhatsApp only — SMS has no read receipts
+  undelivered: MESSAGE_STATUS.FAILED,
+  failed: MESSAGE_STATUS.FAILED,
+};
+
+/**
+ * Twilio's callback carries only an ErrorCode, no text — so the common ones
+ * get a sentence the sender can act on. Anything else links to Twilio's docs.
+ */
+const TWILIO_ERRORS = {
+  63016: 'Outside WhatsApp\'s 24-hour window — the recipient must message you first, or send an approved template.',
+  63015: 'The recipient hasn\'t joined the Twilio WhatsApp Sandbox yet.',
+  63024: 'Invalid WhatsApp recipient — the number isn\'t on WhatsApp.',
+  63003: 'The WhatsApp recipient is unavailable.',
+  63049: 'Meta chose not to deliver this marketing message (per-user limits).',
+  30003: 'The phone is unreachable (switched off or out of coverage).',
+  30004: 'The recipient has blocked messages from this number.',
+  30005: 'Unknown or inactive phone number.',
+  30006: 'The number is a landline or can\'t receive SMS.',
+  30007: 'Blocked by the carrier as possible spam.',
+  30008: 'The carrier couldn\'t deliver it (unknown error).',
+  21610: 'The recipient has unsubscribed (replied STOP).',
+};
+
+const describeTwilioError = (code) =>
+  code
+    ? `Twilio error ${code}: ${TWILIO_ERRORS[code] ?? `see https://www.twilio.com/docs/api/errors/${code}`}`
+    : 'Twilio reported the message as not delivered';
+
+/**
+ * POST /webhooks/twilio/status — one MessageStatus change for a message we
+ * sent. Matched on MessageSid, which the delivery stored as its
+ * platformMessageId when Twilio accepted it.
+ */
+export async function handleTwilioStatus(body) {
+  const toCode = TWILIO_STATUS_MAP[body?.MessageStatus];
+  if (!toCode) return 'ignored';
+
+  const delivery =
+    (await findDeliveryByPlatformMessageId(PLATFORM.WHATSAPP, body.MessageSid)) ??
+    (await findDeliveryByPlatformMessageId(PLATFORM.SMS, body.MessageSid));
+  if (!delivery) return 'unmatched';
+
+  const result = await transitionStatus({
+    deliveryId: delivery.id,
+    toCode,
+    changedBy: CHANGED_BY.WEBHOOK,
+    errorReason: toCode === MESSAGE_STATUS.FAILED ? describeTwilioError(body.ErrorCode) : undefined,
+  });
+  return result.changed ? 'processed' : 'ignored';
+}
+
+/**
+ * POST /webhooks/twilio/inbound — someone messaged one of our Twilio numbers.
+ * A reply is the only "they saw it" signal SMS has, and a strong one for
+ * WhatsApp: it's recorded as a reply (smart-send's skip-if-replied reads
+ * those) and the latest message to that person on that channel becomes Read.
+ * The message text itself is not stored.
+ */
+export async function handleTwilioInbound(body) {
+  const from = String(body?.From ?? '');
+  if (!from) return 'ignored';
+
+  const platformCode = from.startsWith('whatsapp:') ? PLATFORM.WHATSAPP : PLATFORM.SMS;
+  const platform = await lookupByCode('platform', platformCode);
+  const digits = from.replace(/\D/g, '');
+
+  const contacts = await prisma.contact.findMany({
+    where: {
+      deletedAt: null,
+      OR: [
+        { phones: { some: { phone: { in: [`+${digits}`, digits] } } } },
+        { platformHandles: { some: { platformId: platform.id, handle: { in: [`+${digits}`, digits] } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (!contacts.length) return 'unmatched';
+
+  const contactIds = contacts.map((contact) => contact.id);
+  await prisma.contactReply.createMany({
+    data: contactIds.map((contactId) => ({ contactId, platformId: platform.id, repliedAt: new Date() })),
+  });
+
+  // Most recent send only, as for Telegram: one reply can't vouch for older messages.
+  const delivery = await prisma.messageDelivery.findFirst({
+    where: { platformId: platform.id, contactId: { in: contactIds }, sentAt: { not: null } },
+    orderBy: { sentAt: 'desc' },
+  });
+  if (delivery) {
+    await transitionStatus({ deliveryId: delivery.id, toCode: MESSAGE_STATUS.READ, changedBy: CHANGED_BY.WEBHOOK });
+  }
+  return 'processed';
+}
+
 // ---- Telegram -------------------------------------------------------
 
 /**
