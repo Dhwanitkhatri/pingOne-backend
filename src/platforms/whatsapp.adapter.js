@@ -1,6 +1,5 @@
 // ============================================================
-// WhatsApp adapter — Meta WhatsApp Cloud API, or Twilio's WhatsApp sender
-// when WHATSAPP_PROVIDER=twilio (see #sendViaTwilio).
+// WhatsApp adapter — Meta WhatsApp Cloud API.
 //
 // Outside the customer-service window, business-initiated messages need a
 // Meta-approved WhatsApp template. The composer can list approved text
@@ -69,8 +68,6 @@ export class WhatsAppAdapter extends BaseAdapter {
   }
 
   async send({ secret: accessToken, extraInfo }, recipient, message) {
-    if (env.WHATSAPP_PROVIDER === 'twilio') return this.#sendViaTwilio(recipient, message);
-
     const phoneNumberId = extraInfo?.phone_number_id;
     // An OAuth connect whose number couldn't be discovered stores null here;
     // without this Graph gets POST /null/messages and a baffling error back.
@@ -141,69 +138,6 @@ export class WhatsAppAdapter extends BaseAdapter {
 
     // The text message id is the one webhook status callbacks will reference.
     return { platformMessageId: textData.messages?.[0]?.id, raw: textData };
-  }
-
-  /**
-   * WHATSAPP_PROVIDER=twilio: deliver through Twilio's WhatsApp sender with the
-   * server's own Twilio account; the user's Meta credential is not used.
-   * Templates go out as their filled-in body text, which the Sandbox accepts
-   * inside the 24h window that joining it opens.
-   */
-  async #sendViaTwilio(recipient, message) {
-    const accountSid = env.TWILIO_ACCOUNT_SID;
-    const authToken = env.TWILIO_AUTH_TOKEN;
-    if (!accountSid || !authToken) {
-      throw new AppError(
-        503,
-        'WHATSAPP_PROVIDER is "twilio" but TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN are not set.',
-        { code: 'WHATSAPP_TWILIO_NOT_CONFIGURED' }
-      );
-    }
-
-    // Contacts hold "+91…" or bare digits; Twilio wants E.164 with the "+".
-    const to = `whatsapp:+${String(recipient.handle).replace(/\D/g, '')}`;
-    const from = `whatsapp:${env.TWILIO_WHATSAPP_FROM}`;
-    // The composer stores the preview as "WhatsApp template: <name>\n<body>".
-    const body = message.template
-      ? message.template.preview?.split('\n').slice(1).join('\n') ||
-        message.template.bodyText ||
-        message.template.name
-      : message.formatted;
-
-    // WhatsApp carries one media item per message: the first rides with the
-    // text, any others follow on their own, in order.
-    const [first, ...rest] = message.attachments ?? [];
-    const data = await this.#postTwilio({ accountSid, authToken }, { From: from, To: to, Body: body }, first);
-    for (const attachment of rest) {
-      await this.#postTwilio({ accountSid, authToken }, { From: from, To: to }, attachment);
-    }
-
-    return { platformMessageId: data.sid, raw: data };
-  }
-
-  async #postTwilio({ accountSid, authToken }, fields, attachment) {
-    const params = new URLSearchParams(fields);
-    // Twilio fetches media from this URL itself, so PUBLIC_BASE_URL must be public.
-    if (attachment) params.append('MediaUrl', attachment.fileUrl);
-
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: params,
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      // 63015 = recipient hasn't joined the Sandbox — the usual first failure.
-      throw AppError.badRequest(`WhatsApp send failed: ${data.message}`, {
-        code: 'WHATSAPP_SEND_FAILED',
-        details: data,
-      });
-    }
-    return data;
   }
 
   async #sendText(ctx, body) {
