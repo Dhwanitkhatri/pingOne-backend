@@ -6,7 +6,6 @@
 
 import * as service from './platforms.service.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
-import { env } from '../../config/env.js';
 import { getWhatsAppCapability } from './whatsapp-capability.js';
 
 export const list = asyncHandler(async (req, res) => {
@@ -14,7 +13,7 @@ export const list = asyncHandler(async (req, res) => {
   res.status(200).json({
     data: credentials,
     capabilities: {
-      whatsapp: getWhatsAppCapability(credentials, env.WHATSAPP_PROVIDER),
+      whatsapp: getWhatsAppCapability(credentials),
     },
   });
 });

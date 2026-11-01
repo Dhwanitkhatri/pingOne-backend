@@ -4,7 +4,6 @@
 //
 // GET   /webhooks/whatsapp    Meta subscription handshake (hub.challenge)
 // POST  /webhooks/whatsapp    Meta Cloud API status callbacks
-// POST  /webhooks/twilio/whatsapp  Twilio WhatsApp status callbacks
 // POST  /webhooks/telegram    Telegram Bot API updates
 //
 // There is deliberately no `authenticate` on this router: the callers are
@@ -55,7 +54,6 @@ router.use(webhookLimiter);
 // WhatsApp — Meta uses GET to verify the subscription, POST to deliver events.
 router.get('/whatsapp', webhookController.verifyWhatsAppWebhook);
 router.post('/whatsapp', webhookController.receiveWhatsAppWebhook);
-router.post('/twilio/whatsapp', webhookController.receiveTwilioWhatsAppStatus);
 
 // Telegram
 router.post('/telegram', webhookController.receiveTelegramWebhook);

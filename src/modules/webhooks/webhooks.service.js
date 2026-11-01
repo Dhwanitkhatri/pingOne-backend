@@ -30,17 +30,6 @@ const META_STATUS_MAP = {
   failed: MESSAGE_STATUS.FAILED,
 };
 
-/** Twilio callback statuses that have a direct internal lifecycle equivalent. */
-const TWILIO_STATUS_MAP = {
-  sent: MESSAGE_STATUS.SENT,
-  delivered: MESSAGE_STATUS.DELIVERED,
-  read: MESSAGE_STATUS.READ,
-  failed: MESSAGE_STATUS.FAILED,
-  undelivered: MESSAGE_STATUS.FAILED,
-  canceled: MESSAGE_STATUS.CANCELLED,
-  cancelled: MESSAGE_STATUS.CANCELLED,
-};
-
 // ---- WhatsApp -------------------------------------------------------
 
 /**
@@ -135,45 +124,6 @@ async function applyWhatsAppStatus(status) {
 function describeMetaErrors(errors) {
   if (!errors?.length) return 'WhatsApp reported the message as failed';
   return errors.map((e) => `${e.title ?? e.code ?? 'error'}: ${e.message ?? e.details ?? ''}`.trim()).join('; ');
-}
-
-/** Apply one Twilio WhatsApp form status callback. Repeats are idempotent. */
-export async function handleTwilioWhatsAppStatus(
-  body,
-  { findDelivery = findDeliveryByPlatformMessageId, applyTransition = transitionStatus } = {}
-) {
-  const summary = { processed: 0, ignored: 0, unmatched: 0 };
-  const sid = body?.MessageSid ?? body?.SmsSid;
-  const status = String(body?.MessageStatus ?? body?.SmsStatus ?? '').toLowerCase();
-  const toCode = TWILIO_STATUS_MAP[status];
-
-  if (!sid || !toCode) {
-    summary.ignored += 1;
-    return summary;
-  }
-
-  const delivery = await findDelivery(PLATFORM.WHATSAPP, sid);
-  if (!delivery) {
-    summary.unmatched += 1;
-    console.warn(`[webhook:twilio:whatsapp] no delivery found for message id ${sid}`);
-    return summary;
-  }
-
-  const errorCode = body?.ErrorCode ? String(body.ErrorCode) : null;
-  const errorMessage = body?.ErrorMessage ? String(body.ErrorMessage) : null;
-  const errorReason = toCode === MESSAGE_STATUS.FAILED
-    ? [errorCode && `Twilio ${errorCode}`, errorMessage].filter(Boolean).join(': ') || 'Twilio reported the message as failed'
-    : undefined;
-
-  const result = await applyTransition({
-    deliveryId: delivery.id,
-    toCode,
-    changedBy: CHANGED_BY.WEBHOOK,
-    errorReason,
-  });
-
-  summary[result.changed ? 'processed' : 'ignored'] += 1;
-  return summary;
 }
 
 // ---- Telegram -------------------------------------------------------

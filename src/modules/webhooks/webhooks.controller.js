@@ -18,7 +18,6 @@ import {
   verifyMetaSignature,
   verifyMetaSubscription,
   verifyTelegramSecret,
-  verifyTwilioSignature,
 } from './signature.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
@@ -40,18 +39,6 @@ export const receiveWhatsAppWebhook = asyncHandler(async (req, res) => {
 
   console.log(
     `[webhook:whatsapp] processed=${summary.processed} ignored=${summary.ignored} unmatched=${summary.unmatched}`
-  );
-  res.status(200).json({ received: true, ...summary });
-});
-
-/** POST /webhooks/twilio/whatsapp — Twilio message status callback. */
-export const receiveTwilioWhatsAppStatus = asyncHandler(async (req, res) => {
-  verifyTwilioSignature(req);
-
-  const summary = await webhookService.handleTwilioWhatsAppStatus(req.body);
-
-  console.log(
-    `[webhook:twilio:whatsapp] processed=${summary.processed} ignored=${summary.ignored} unmatched=${summary.unmatched}`
   );
   res.status(200).json({ received: true, ...summary });
 });

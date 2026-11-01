@@ -110,20 +110,6 @@ const envSchema = z.object({
   ),
   TWILIO_AUTH_TOKEN: optional(z.string().trim().min(10).optional()),
 
-  // All WhatsApp deliveries on this server use the selected provider. Meta is
-  // the existing/default path; Twilio Sandbox uses the server credentials
-  // below, rather than a per-user platform credential.
-  WHATSAPP_PROVIDER: z.enum(['meta', 'twilio']).default('meta'),
-  TWILIO_WHATSAPP_FROM: optional(
-    z.string().trim().regex(/^whatsapp:\+[1-9]\d{6,14}$/, 'TWILIO_WHATSAPP_FROM must be whatsapp:+<E.164 number>').optional()
-  ),
-  TWILIO_WHATSAPP_CONTENT_SID: optional(
-    z.string().trim().regex(/^HX[0-9a-fA-F]{32}$/, 'TWILIO_WHATSAPP_CONTENT_SID must be a Content SID starting with HX').optional()
-  ),
-  // Set false only in the worker process for a one-shot Sandbox test. The
-  // normal retry policy remains enabled unless explicitly disabled.
-  TWILIO_WHATSAPP_RETRY_ENABLED: z.enum(['true', 'false']).default('true'),
-
   // ---- Outbound email (SMTP) --------------------------------------
   // Transactional mail the SERVER sends as itself: password-reset links and
   // permanent-failure alerts. Nothing to do with the Gmail platform adapter,
@@ -207,23 +193,6 @@ const envSchema = z.object({
   // both safely use the default rather than making an invalid provider call.
   AI_MODEL: optional(z.string().trim().min(1).optional()).default('gemini-2.5-flash'),
   AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(30000),
-}).superRefine((values, ctx) => {
-  if (values.WHATSAPP_PROVIDER !== 'twilio') return;
-
-  for (const key of [
-    'TWILIO_ACCOUNT_SID',
-    'TWILIO_AUTH_TOKEN',
-    'TWILIO_WHATSAPP_FROM',
-    'TWILIO_WHATSAPP_CONTENT_SID',
-  ]) {
-    if (!values[key]) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [key],
-        message: `is required when WHATSAPP_PROVIDER=twilio`,
-      });
-    }
-  }
 });
 
 const parsed = envSchema.safeParse(process.env);

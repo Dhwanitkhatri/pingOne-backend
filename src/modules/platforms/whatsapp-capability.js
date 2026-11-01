@@ -1,13 +1,12 @@
 /**
  * Public WhatsApp sending capability for the authenticated platform list.
- * Twilio is server-configured; Meta remains available only with an active
- * WhatsApp credential owned by this user.
+ * WhatsApp always sends through Meta's Cloud API, so it is available only
+ * with an active WhatsApp credential owned by this user.
  */
-export function getWhatsAppCapability(credentials, configuredProvider) {
-  const provider = configuredProvider === 'twilio' ? 'twilio' : 'meta';
-  const available = provider === 'twilio' || credentials.some(
+export function getWhatsAppCapability(credentials) {
+  const available = credentials.some(
     (credential) => credential.platform?.code === 'whatsapp' && credential.isActive
   );
 
-  return { available, provider };
+  return { available, provider: 'meta' };
 }
