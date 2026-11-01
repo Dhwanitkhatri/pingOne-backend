@@ -30,14 +30,37 @@ export async function sendWhatsAppViaTwilio(recipient, message) {
     : message.formatted;
 
   // WhatsApp carries one media item per message: the first rides with the
-  // text, any others follow on their own, in order.
-  const [first, ...rest] = message.attachments ?? [];
-  const data = await postMessage(auth, { From: from, To: to, Body: body }, first);
-  for (const attachment of rest) {
+  // text, any others follow on their own, in order. A template can't carry
+  // media, so with one configured every attachment goes on its own — and
+  // those still need the recipient's 24h window to be open.
+  const attachments = [...(message.attachments ?? [])];
+  const data = env.TWILIO_WHATSAPP_CONTENT_SID
+    ? await postMessage(auth, {
+        From: from,
+        To: to,
+        ContentSid: env.TWILIO_WHATSAPP_CONTENT_SID,
+        // An empty variable is rejected too — an attachment-only message
+        // still needs some text in the template.
+        ContentVariables: JSON.stringify({ 1: toTemplateVariable(body) || 'Attachment' }),
+      })
+    : await postMessage(auth, { From: from, To: to, Body: body }, attachments.shift());
+  for (const attachment of attachments) {
     await postMessage(auth, { From: from, To: to }, attachment);
   }
 
   return { platformMessageId: data.sid, raw: data };
+}
+
+/**
+ * WhatsApp rejects a template variable containing a newline or tab, or more
+ * than four spaces in a row, and caps it at 1024 characters.
+ */
+function toTemplateVariable(text) {
+  return String(text ?? '')
+    .replace(/\s*[\r\n\t]+\s*/g, ' · ')
+    .replace(/ {5,}/g, '    ')
+    .trim()
+    .slice(0, 1024);
 }
 
 async function postMessage({ accountSid, authToken }, fields, attachment) {

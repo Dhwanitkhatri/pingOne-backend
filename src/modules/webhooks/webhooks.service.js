@@ -122,7 +122,10 @@ async function applyWhatsAppStatus(status) {
       const { assertQueueReachable, enqueueDelivery } = await import('../../queue/queue.service.js');
       // Without this an add() against a down Redis waits instead of throwing.
       await assertQueueReachable();
-      await enqueueDelivery(delivery.id, 'normal', { viaTwilio: true });
+      // Keyed by Meta's message id, not the delivery: Meta redelivers the same
+      // webhook (dropped as a duplicate), but a later Meta attempt has a new id
+      // and must still be able to fall back.
+      await enqueueDelivery(delivery.id, 'normal', { viaTwilio: true, jobId: `whatsapp-twilio-${status.id}` });
       console.warn(
         `[webhook:whatsapp] delivery ${delivery.id} failed at Meta (${describeMetaErrors(status.errors)}), re-sending through Twilio`
       );

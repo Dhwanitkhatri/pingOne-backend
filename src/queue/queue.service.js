@@ -50,18 +50,17 @@ export async function assertQueueReachable() {
  *        Normal is default for regular scheduled messages
  *        Low is for background/batch operations
  */
-export async function enqueueDelivery(deliveryId, priority = 'normal', { viaTwilio = false } = {}) {
+export async function enqueueDelivery(deliveryId, priority = 'normal', { viaTwilio = false, jobId } = {}) {
   const priorityValue = getPriorityValue(priority);
 
   await deliveryQueue.add(
     'send',
-    // viaTwilio: a WhatsApp re-send after Meta's webhook reported a failure.
+    // viaTwilio: a WhatsApp send that skips Meta, which has already failed it.
     viaTwilio ? { deliveryId, viaTwilio } : { deliveryId },
     {
       priority: priorityValue,
-      // Meta redelivers webhooks, so the same failure can arrive twice; a fixed
-      // id makes BullMQ drop the duplicate instead of messaging twice.
-      ...(viaTwilio ? { jobId: `whatsapp-twilio-${deliveryId}` } : {}),
+      // A fixed id makes BullMQ drop a duplicate add (e.g. a redelivered webhook).
+      ...(jobId ? { jobId } : {}),
       attempts: 1, // retries are handled explicitly via retryQueue, not BullMQ's built-in attempts
       removeOnComplete: 500,
       removeOnFail: 1000,
@@ -77,9 +76,11 @@ export async function enqueueDelivery(deliveryId, priority = 'normal', { viaTwil
  * @param {number} deliveryId - The MessageDelivery ID
  * @param {number} attemptNumber - Current attempt number
  * @param {string} [priority='normal'] - Job priority (same as enqueueDelivery)
+ * @param {{ viaTwilio?: boolean }} [options] - carried to the re-attempt, so a
+ *        WhatsApp send already moved to Twilio doesn't fall back to Meta
  * @returns {boolean} True if retry was scheduled, false if max attempts exceeded
  */
-export async function enqueueRetry(deliveryId, attemptNumber, priority = 'normal') {
+export async function enqueueRetry(deliveryId, attemptNumber, priority = 'normal', { viaTwilio = false } = {}) {
   if (attemptNumber > MAX_RETRY_ATTEMPTS) return false;
 
   const priorityValue = getPriorityValue(priority);
@@ -87,7 +88,7 @@ export async function enqueueRetry(deliveryId, attemptNumber, priority = 'normal
 
   await retryQueue.add(
     'retry',
-    { deliveryId, attemptNumber },
+    viaTwilio ? { deliveryId, attemptNumber, viaTwilio } : { deliveryId, attemptNumber },
     {
       priority: priorityValue,
       delay,

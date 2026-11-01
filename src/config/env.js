@@ -133,6 +133,17 @@ const envSchema = z.object({
         .optional()
     )
   ).default('+14155238886'),
+  // Optional approved WhatsApp template (Twilio Content Template Builder,
+  // "HX…" sid) with ONE variable, {{1}}, which carries the message text.
+  // WhatsApp only accepts free text within 24h of the recipient's last
+  // message; with this set, sends go out as the template and reach anyone.
+  TWILIO_WHATSAPP_CONTENT_SID: optional(
+    z
+      .string()
+      .trim()
+      .regex(/^HX[0-9a-fA-F]{32}$/, 'TWILIO_WHATSAPP_CONTENT_SID must start with "HX" and be 34 characters')
+      .optional()
+  ),
 
   // ---- Outbound email (SMTP) --------------------------------------
   // Transactional mail the SERVER sends as itself: password-reset links and

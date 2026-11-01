@@ -21,9 +21,9 @@ export function startRetryWorker() {
   const worker = new Worker(
     QUEUE_NAMES.RETRY,
     async (job) => {
-      const { deliveryId, attemptNumber } = job.data;
+      const { deliveryId, attemptNumber, viaTwilio } = job.data;
       console.log(`[retry] re-attempting delivery ${deliveryId} (attempt ${attemptNumber + 1})`);
-      await enqueueDelivery(deliveryId);
+      await enqueueDelivery(deliveryId, 'normal', { viaTwilio });
     },
     {
       connection,

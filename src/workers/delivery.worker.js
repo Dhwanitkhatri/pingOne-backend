@@ -171,11 +171,11 @@ async function processDeliveryJob(job) {
       data: { platformMessageId: result.platformMessageId, retryCount: 0 },
     });
   } catch (err) {
-    await handleFailure(delivery, err);
+    await handleFailure(delivery, err, { viaTwilio });
   }
 }
 
-async function handleFailure(delivery, err) {
+async function handleFailure(delivery, err, { viaTwilio = false } = {}) {
   const nextAttempt = delivery.retryCount + 1;
 
   // Record the failure before queueing the retry. If Redis is down, enqueueRetry
@@ -190,7 +190,9 @@ async function handleFailure(delivery, err) {
     data: { retryCount: nextAttempt },
   });
 
-  const willRetry = await enqueueRetry(delivery.id, nextAttempt);
+  // A Twilio re-send that fails retries through Twilio: going back to Meta
+  // would get "accepted" again, then fail again after the fact.
+  const willRetry = await enqueueRetry(delivery.id, nextAttempt, 'normal', { viaTwilio });
 
   if (!willRetry) {
     console.error(
