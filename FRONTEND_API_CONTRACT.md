@@ -191,7 +191,7 @@ Errors: `409 EMAIL_TAKEN`, `400 VALIDATION_ERROR`, `429 RATE_LIMITED`.
 
 ### `POST /auth/login` — *public* — `200`
 Same shape as signup.
-Errors: `401 INVALID_CREDENTIALS` (also returned for unknown email — no user enumeration), `403 ACCOUNT_DISABLED`, `429 RATE_LIMITED`.
+Errors: `401 INVALID_CREDENTIALS` (also returned for unknown email — no user enumeration), `403 ACCOUNT_DISABLED`, `403 ADMIN_LOGIN_REQUIRED` (correct password on an ADMIN / SUPER_ADMIN account — those sign in at `POST /admin/auth/login`; no tokens are issued), `429 RATE_LIMITED`.
 
 ### `POST /auth/refresh` — *public* — `200`
 ```jsonc
@@ -216,9 +216,9 @@ Errors — all `401`, all mean "send the user back to login":
 
 ### `POST /auth/forgot-password` — *public* — `200`
 ```jsonc
-{ "message": "If an account with that email exists, a password reset link has been sent." }
+{ "message": "A password reset link has been sent to your email." }
 ```
-Always identical, whether or not the email exists.
+Errors: `404 USER_NOT_FOUND` ("No account found with this email." — a product decision that gives up enumeration protection), `403 ACCOUNT_DISABLED`, `503 EMAIL_SEND_FAILED`, `429 RATE_LIMITED`.
 
 ### `POST /auth/reset-password` — *public* — `200`
 ```jsonc

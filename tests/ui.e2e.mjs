@@ -524,14 +524,14 @@ try {
     return widths.join(', ');
   });
 
-  await tc('TC-UI-29', 'Forgot password page', '/forgot-password → enter an email → submit', '"Check your email" confirmation', async () => {
+  await tc('TC-UI-29', 'Forgot password page', '/forgot-password → enter an unregistered email → submit', '"No account found" error, no "Check your email"', async () => {
     const p3 = await newPage();
     await p3.goto(`${APP}/forgot-password`, { waitUntil: 'networkidle0' });
     await typeInto(p3, 'input[type="email"]', `pingone-qa-${RUN}-nobody@example.com`);
     await click(p3, 'link', { exact: false, tag: 'button[type="submit"]' }).catch(() => p3.keyboard.press('Enter'));
-    await waitText(p3, 'Check your email');
+    await waitText(p3, 'No account found with this email.');
     await p3.browserContext().close();
-    return '"Check your email" shown';
+    return '"No account found with this email." shown';
   });
 
   await tc('TC-UI-30', 'Reset password with an invalid link', '/reset-password?token=invalid → enter a new password twice → submit', '"This link has expired" with a way to request a new link', async () => {

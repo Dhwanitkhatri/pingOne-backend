@@ -41,11 +41,9 @@ export const me = asyncHandler(async (req, res) => {
 });
 
 export const forgotPassword = asyncHandler(async (req, res) => {
+  // Throws 404 USER_NOT_FOUND for an unregistered email — see the service.
   await authService.requestPasswordReset(req.body);
-  // Always the same response — never reveal whether the email is registered.
-  res.status(200).json({
-    message: 'If an account with that email exists, a password reset link has been sent.',
-  });
+  res.status(200).json({ message: 'A password reset link has been sent to your email.' });
 });
 
 export const resetPassword = asyncHandler(async (req, res) => {

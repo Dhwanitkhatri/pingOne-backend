@@ -171,9 +171,9 @@ registry is what makes the flow real rather than advisory:
 - **Resetting a password signs out all sessions.**
 
 **Password reset flow**
-1. `POST /forgot-password` with the user's email. The response is **always** the same
-   (`"If an account with that email exists, …"`) so it can't be used to discover which
-   emails are registered. If the account exists, a single-use reset link is emailed:
+1. `POST /forgot-password` with the user's email. An unregistered email answers
+   `404 USER_NOT_FOUND` (a product decision — this does reveal which emails are
+   registered). If the account exists, a single-use reset link is emailed:
    `${FRONTEND_URL}/reset-password?token=<raw-token>`.
 2. Only the **SHA-256 hash** of the token is stored (`password_reset_tokens`); the raw
    token lives only in the link. Links expire after `PASSWORD_RESET_TTL_MIN` minutes.

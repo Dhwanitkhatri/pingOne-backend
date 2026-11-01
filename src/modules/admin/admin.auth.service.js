@@ -76,10 +76,9 @@ export async function login({ email, password }, session = {}) {
       session
     );
 
-    throw AppError.forbidden(
-      'This account does not have administrator access',
-      { code: 'ADMIN_ACCESS_REQUIRED' }
-    );
+    throw AppError.forbidden("This account doesn't have admin access.", {
+      code: 'ADMIN_ACCESS_REQUIRED',
+    });
   }
 
   // Same housekeeping the customer login does — drop dead refresh rows.

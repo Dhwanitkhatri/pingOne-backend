@@ -438,11 +438,13 @@ async function main() {
     ok(row, 'no reset token row created');
     return `200; "${forgotMsg}"; reset token row created`;
   });
-  await tc('TC-AUTH-24', AU, 'Forgot password — unregistered email', 'Same request with an unknown email', '200 with the identical message (no user enumeration)', async () => {
+  // Product decision: an unknown email is reported rather than masked, which
+  // trades away enumeration protection (see requestPasswordReset).
+  await tc('TC-AUTH-24', AU, 'Forgot password — unregistered email', 'Same request with an unknown email', '404 USER_NOT_FOUND', async () => {
     const r = await api('POST', '/auth/forgot-password', { body: { email: `${EMAIL_PREFIX}${RUN}-nobody@example.com` } });
-    expectStatus(r, 200);
-    ok(r.body.message === forgotMsg, `different message: ${r.body.message}`);
-    return '200; identical message';
+    expectErr(r, 404, 'USER_NOT_FOUND');
+    ok(r.body.error?.message !== forgotMsg, 'unknown email got the success message');
+    return '404 USER_NOT_FOUND — "No account found with this email."';
   });
   const NEWPASS = 'QaReset@67890';
   let resetRaw;
@@ -1444,6 +1446,12 @@ async function main() {
   });
   await tc('TC-ADM-02', AD, 'Normal user tries admin login', 'Admin login with a USER account', '403 ADMIN_ACCESS_REQUIRED', async () =>
     expectErr(await api('POST', '/admin/auth/login', { body: { email: A.email, password: A.password } }), 403, 'ADMIN_ACCESS_REQUIRED'));
+  await tc('TC-ADM-02b', AD, 'Admin tries the customer login', 'POST /auth/login with an ADMIN account', '403 ADMIN_LOGIN_REQUIRED; no tokens', async () => {
+    const r = await api('POST', '/auth/login', { body: { email: ADM.email, password: ADM.password } });
+    expectErr(r, 403, 'ADMIN_LOGIN_REQUIRED');
+    ok(!r.body.accessToken && !r.body.refreshToken, 'tokens were issued');
+    return describe(r);
+  });
   await tc('TC-ADM-03', AD, 'Normal user calls an admin API', "GET /admin/dashboard/stats with a USER's token", '403 ADMIN_ACCESS_REQUIRED', async () =>
     expectErr(await api('GET', '/admin/dashboard/stats', { token: A.token }), 403, 'ADMIN_ACCESS_REQUIRED'));
   await tc('TC-ADM-04', AD, 'Admin API without a token', 'GET /admin/dashboard/stats', '401 NO_TOKEN', async () =>

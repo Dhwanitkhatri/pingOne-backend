@@ -2,10 +2,11 @@
 // Auth routes (mounted at /api/v1/auth).
 //
 //   POST /signup           — create an account
-//   POST /login            — email + password -> tokens
+//   POST /login            — email + password -> tokens (403 for admin accounts,
+//                            which use POST /admin/auth/login instead)
 //   POST /logout           — revoke a refresh token (or every session)
 //   POST /refresh          — rotate a refresh token -> new pair
-//   POST /forgot-password  — email a reset link
+//   POST /forgot-password  — email a reset link (404 for an unknown email)
 //   POST /reset-password   — consume the link, set a new password
 //   POST /verify-email     — consume the emailed link, mark the address verified
 //   POST /resend-verification — email a fresh verification link (protected)

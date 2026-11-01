@@ -21,6 +21,7 @@ import { generateToken, sha256Hex } from '../../utils/crypto.js';
 import { sendPasswordResetEmail, sendVerificationEmail } from '../../utils/mailer.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
+import { isAdminRole } from '../../middleware/authorize.js';
 
 // Fields safe to return to the client (never the password hash).
 //
@@ -192,6 +193,16 @@ export async function login({ email, password }, session) {
     throw AppError.forbidden('This account is disabled', { code: 'ACCOUNT_DISABLED' });
   }
 
+  // Operator accounts sign in through POST /admin/auth/login only, which adds
+  // the audit trail and the tighter rate limit. Checked after the password,
+  // like the admin login's own role gate, so this can't be used to probe
+  // which addresses are admin accounts. No tokens are issued.
+  if (isAdminRole(user.role)) {
+    throw AppError.forbidden('This is an admin account — sign in from the admin login page.', {
+      code: 'ADMIN_LOGIN_REQUIRED',
+    });
+  }
+
   // Opportunistic housekeeping — keep the registry from growing forever.
   await prisma.refreshToken.deleteMany({
     where: { userId: user.id, expiresAt: { lt: new Date() } },
@@ -313,19 +324,28 @@ export function revokeAllSessions(userId) {
 
 /**
  * Start a password reset. Generates a single-use token, stores only its
- * hash, and emails the raw token as a link. Intentionally reveals nothing
- * about whether the email exists — the caller always returns the same
- * response (no user enumeration).
+ * hash, and emails the raw token as a link.
+ *
+ * PRODUCT DECISION: an unknown address answers 404 USER_NOT_FOUND instead of
+ * pretending a link was sent. That deliberately gives up protection against
+ * user enumeration — anyone can now learn whether an email is registered —
+ * in exchange for telling a real user they typed the wrong address. The auth
+ * rate limiter is what's left to slow a scripted sweep down.
  */
 export async function requestPasswordReset({ email }) {
   const user = await prisma.user.findFirst({
-    where: { email, isActive: true, deletedAt: null },
-    select: { id: true, email: true },
+    where: { email, deletedAt: null },
+    select: { id: true, email: true, isActive: true },
   });
 
-  // Unknown / disabled account: do nothing, but let the caller respond
-  // identically to the success case.
-  if (!user) return;
+  if (!user) {
+    throw AppError.notFound('No account found with this email.', { code: 'USER_NOT_FOUND' });
+  }
+
+  // Same answer the login gives — a reset would only lead to a login that fails.
+  if (!user.isActive) {
+    throw AppError.forbidden('This account is disabled', { code: 'ACCOUNT_DISABLED' });
+  }
 
   const rawToken = generateToken(32);
   const tokenHash = sha256Hex(rawToken);
@@ -339,17 +359,18 @@ export async function requestPasswordReset({ email }) {
 
   const resetUrl = `${env.FRONTEND_URL}/reset-password?token=${rawToken}`;
 
-  // A failed send must NOT become a 500. The controller answers identically
-  // for known and unknown emails precisely so an attacker can't enumerate
-  // accounts — and a 500 that only ever happens for real users would hand
-  // back exactly that signal. Log it loudly instead; the operator sees the
-  // cause in the server log, the caller sees the same reply either way.
+  // The response already says whether the account exists, so a failed send
+  // has nothing left to hide: report it (as resendVerification does) rather
+  // than tell the user to check an inbox the link never reached.
   try {
     await sendPasswordResetEmail(user.email, resetUrl, env.PASSWORD_RESET_TTL_MIN);
   } catch (err) {
     console.error(
       `[auth] password reset token was created for ${user.email} but the email could not be sent: ${err.message}`
     );
+    throw new AppError(503, "We couldn't send the reset email right now. Please try again shortly.", {
+      code: 'EMAIL_SEND_FAILED',
+    });
   }
 }
 
