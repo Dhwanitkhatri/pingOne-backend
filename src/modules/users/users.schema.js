@@ -3,6 +3,7 @@
 // ============================================================
 
 import { z } from 'zod';
+import { personNameString } from '../../utils/validators.js';
 
 /** How often the digest email goes out. Stored as VARCHAR(20). */
 export const DIGEST_FREQUENCIES = ['daily', 'weekly', 'monthly', 'never'];
@@ -41,8 +42,9 @@ export const updatePreferencesSchema = z
  */
 export const updateProfileSchema = z
   .object({
-    firstName: z.string().trim().min(1, 'First name is required').max(100).optional(),
-    lastName: z.string().trim().min(1, 'Last name is required').max(100).optional(),
+    // Same rule as signup, so a rename can't store what registration refuses.
+    firstName: personNameString('First name').optional(),
+    lastName: personNameString('Last name').optional(),
   })
   .refine((data) => data.firstName !== undefined || data.lastName !== undefined, {
     message: 'Provide at least firstName or lastName',

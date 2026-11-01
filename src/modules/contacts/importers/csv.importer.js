@@ -11,6 +11,10 @@
 // Any column containing "email" / "phone" is picked up, so E-mail 1,
 // E-mail 2, Mobile Phone … all land on the same contact. Multiple values
 // in one cell can be separated by ";" or "|".
+//
+// The column separator is detected from the header row: Excel in many
+// locales (most of Europe) saves "CSV" with ";", and tab-separated exports
+// are common too. In a ";"-separated file, use "|" for multiple values.
 // ============================================================
 
 import { parse } from 'csv-parse/sync';
@@ -28,6 +32,25 @@ const FULL_NAME_KEYS = ['name', 'fullname', 'displayname', 'contactname'];
 /** Lowercase and strip everything that isn't a letter or digit. */
 const normalizeHeader = (header) => String(header).toLowerCase().replace(/[^a-z0-9]/g, '');
 
+const DELIMITERS = [',', ';', '\t'];
+
+/**
+ * Pick the separator that splits the header row into the most columns,
+ * ignoring anything inside quotes. Ties and a one-column header stay ",".
+ * Without this, "Name;Email" parses as one column whose cells hold the
+ * whole line — the email ends up as part of the contact's name.
+ */
+function detectDelimiter(buffer) {
+  const headerLine = buffer.toString('utf8', 0, Math.min(buffer.length, 4096)).split(/\r?\n/, 1)[0];
+  const counts = Object.fromEntries(DELIMITERS.map((d) => [d, 0]));
+  let inQuotes = false;
+  for (const char of headerLine) {
+    if (char === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && char in counts) counts[char] += 1;
+  }
+  return DELIMITERS.reduce((best, d) => (counts[d] > counts[best] ? d : best), ',');
+}
+
 /**
  * Parse an uploaded CSV buffer into import rows.
  *
@@ -38,6 +61,7 @@ export function parseContactsCsv(buffer) {
   let records;
   try {
     records = parse(buffer, {
+      delimiter: detectDelimiter(buffer),
       bom: true,
       trim: true,
       skip_empty_lines: true,

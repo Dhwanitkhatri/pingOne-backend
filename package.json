@@ -9,7 +9,7 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "prisma migrate deploy && prisma generate && node src/server.js",
+    "start": "prisma migrate deploy && prisma generate && prisma db seed && node src/server.js",
     "postinstall": "prisma generate",
     "build": "prisma generate",
     "lint": "eslint .",
