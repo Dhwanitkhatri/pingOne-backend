@@ -91,7 +91,8 @@ export async function completeMeta({ code, state }) {
     userId,
     platform: 'whatsapp',
     account: target.displayPhoneNumber ?? target.businessAccountId ?? null,
-    needsPhoneNumberId: !target.phoneNumberId,
+    // From the stored row: connectWhatsApp may have found the number itself.
+    needsPhoneNumberId: !credential.extraInfo?.phone_number_id,
     credential,
   };
 }

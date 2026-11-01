@@ -69,6 +69,15 @@ export class WhatsAppAdapter extends BaseAdapter {
 
   async send({ secret: accessToken, extraInfo }, recipient, message) {
     const phoneNumberId = extraInfo?.phone_number_id;
+    // An OAuth connect whose number couldn't be discovered stores null here;
+    // without this Graph gets POST /null/messages and a baffling error back.
+    if (!phoneNumberId) {
+      throw AppError.badRequest(
+        'WhatsApp is connected without a phone number ID. Reconnect WhatsApp and paste the ' +
+          'Phone number ID from WhatsApp → API Setup in your Meta app.',
+        { code: 'WHATSAPP_PHONE_NUMBER_ID_MISSING' }
+      );
+    }
     const attachments = message.attachments ?? [];
     const ctx = { accessToken, phoneNumberId, to: recipient.handle };
 

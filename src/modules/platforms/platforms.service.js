@@ -123,6 +123,11 @@ export async function connectWhatsApp(
   { accessToken, phoneNumberId, businessAccountId, expiresAt }
 ) {
   businessAccountId = businessAccountId ?? env.META_WABA_ID;
+  // OAuth discovery can miss the number even when the WABA is known (e.g. from
+  // META_WABA_ID) — ask the WABA directly before settling for a pending row.
+  if (!phoneNumberId && businessAccountId) {
+    phoneNumberId = await findWhatsAppNumberId(accessToken, businessAccountId);
+  }
   const number = phoneNumberId ? await verifyWhatsAppNumber(accessToken, phoneNumberId) : {};
 
   return connect({
@@ -137,6 +142,15 @@ export async function connectWhatsApp(
     },
     expiresAt: expiresAt ?? null,
   });
+}
+
+/** First phone number on the WABA, or null. Best-effort — never throws. */
+async function findWhatsAppNumberId(accessToken, businessAccountId) {
+  const numbers = await fetchJson(
+    `https://graph.facebook.com/${env.META_API_VERSION}/${businessAccountId}/phone_numbers`,
+    { provider: 'Meta', headers: { Authorization: `Bearer ${accessToken}` } }
+  ).catch(() => null);
+  return numbers?.data?.[0]?.id ?? null;
 }
 
 /**
