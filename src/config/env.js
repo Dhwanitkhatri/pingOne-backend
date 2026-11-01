@@ -130,9 +130,11 @@ const envSchema = z.object({
       z
         .string()
         .regex(/^\+[1-9]\d{6,14}$/, 'TWILIO_WHATSAPP_FROM must be E.164, e.g. +14155238886')
-        .optional()
+        // Inside optional(), so a blank `TWILIO_WHATSAPP_FROM=` gets it too —
+        // an outer .default() only sees the raw "" and never fires.
+        .default('+14155238886')
     )
-  ).default('+14155238886'),
+  ),
   // Optional approved WhatsApp template (Twilio Content Template Builder,
   // "HX…" sid) with ONE variable, {{1}}, which carries the message text.
   // WhatsApp only accepts free text within 24h of the recipient's last
@@ -144,6 +146,36 @@ const envSchema = z.object({
       .regex(/^HX[0-9a-fA-F]{32}$/, 'TWILIO_WHATSAPP_CONTENT_SID must start with "HX" and be 34 characters')
       .optional()
   ),
+  // Twilio-provided WhatsApp templates a TRIAL account is allowed to send.
+  // Trial accounts can't list them over the API, so copy each one's
+  // ContentSid and body from Console -> Messaging -> Try it out -> Try
+  // WhatsApp. A JSON array (single-quote the whole value in .env):
+  //   [{"sid":"HX…","name":"Appointment reminder","body":"Your appointment is on {{1}} at {{2}}"}]
+  // They're listed beside Meta's approved templates in the composer and
+  // always go out through Twilio.
+  TWILIO_WHATSAPP_TEMPLATES: optional(
+    z.preprocess(
+      (val) => {
+        if (typeof val !== 'string') return val;
+        try {
+          return JSON.parse(val);
+        } catch {
+          return val; // left for z.array() to reject with a readable message
+        }
+      },
+      z
+        .array(
+          z.object({
+            sid: z.string().trim().regex(/^HX[0-9a-fA-F]{32}$/, 'each template sid must start with "HX" and be 34 characters'),
+            name: z.string().trim().min(1),
+            body: z.string().trim().min(1),
+            language: z.string().trim().min(1).default('en'),
+          }),
+          { invalid_type_error: 'TWILIO_WHATSAPP_TEMPLATES must be a JSON array, e.g. [{"sid":"HX…","name":"…","body":"…{{1}}…"}]' }
+        )
+        .default([]) // inside optional(), so a blank value also becomes []
+    )
+  ).default([]),
 
   // ---- Outbound email (SMTP) --------------------------------------
   // Transactional mail the SERVER sends as itself: password-reset links and
@@ -181,8 +213,8 @@ const envSchema = z.object({
       .string()
       .trim()
       .regex(/^[A-Za-z0-9_-]+$/, 'QUEUE_PREFIX may contain only letters, digits, "-" and "_"')
-      .optional()
-  ).default('bull'),
+      .default('bull') // inside optional(), so a blank value also gets it
+  ),
 
   // ---- Message attachments ----------------------------------------
   // Where attachment files are written. A relative path (the dev default) is

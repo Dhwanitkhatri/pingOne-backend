@@ -17,6 +17,11 @@ import { env } from '../config/env.js';
  * @returns {Promise<{ platformMessageId: string, raw: object }>}
  */
 export async function sendWhatsAppViaTwilio(recipient, message) {
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) {
+    throw new AppError(503, 'WhatsApp via Twilio needs TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN on the server.', {
+      code: 'WHATSAPP_TWILIO_NOT_CONFIGURED',
+    });
+  }
   const auth = { accountSid: env.TWILIO_ACCOUNT_SID, authToken: env.TWILIO_AUTH_TOKEN };
 
   // Twilio wants E.164 with the "+", prefixed with the channel.
@@ -34,6 +39,24 @@ export async function sendWhatsAppViaTwilio(recipient, message) {
   // media, so with one configured every attachment goes on its own — and
   // those still need the recipient's 24h window to be open.
   const attachments = [...(message.attachments ?? [])];
+
+  // A Twilio trial template picked in the composer: its own ContentSid, with
+  // the values the sender filled in as {{1}}, {{2}}, …
+  if (message.template?.contentSid) {
+    const values = message.template.parameters ?? [];
+    const data = await postMessage(auth, {
+      From: from,
+      To: to,
+      ContentSid: message.template.contentSid,
+      ...(values.length && {
+        ContentVariables: JSON.stringify(
+          Object.fromEntries(values.map((value, index) => [index + 1, toTemplateVariable(value)]))
+        ),
+      }),
+    });
+    return { platformMessageId: data.sid, raw: data };
+  }
+
   const data = env.TWILIO_WHATSAPP_CONTENT_SID
     ? await postMessage(auth, {
         From: from,

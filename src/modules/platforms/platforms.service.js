@@ -177,8 +177,37 @@ async function verifyWhatsAppNumber(accessToken, phoneNumberId) {
   });
 }
 
-/** List the connected user's approved WhatsApp message templates. */
+/**
+ * WhatsApp templates the composer can offer: Meta's approved ones plus any
+ * Twilio trial templates configured in TWILIO_WHATSAPP_TEMPLATES. With Twilio
+ * templates on hand, a Meta failure (locked account, no WABA) only empties
+ * Meta's half of the list instead of failing the whole request.
+ */
 export async function listWhatsAppTemplates(userId) {
+  const twilio = twilioWhatsAppTemplates();
+  if (!twilio.length) return listMetaWhatsAppTemplates(userId);
+
+  const meta = await listMetaWhatsAppTemplates(userId).catch((err) => {
+    console.warn(`[whatsapp] could not list Meta templates, offering Twilio's only: ${err.message}`);
+    return [];
+  });
+  return [...meta, ...twilio];
+}
+
+/** TWILIO_WHATSAPP_TEMPLATES in the composer's template shape, tagged with their ContentSid. */
+function twilioWhatsAppTemplates() {
+  if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) return [];
+  return env.TWILIO_WHATSAPP_TEMPLATES.map(({ sid, name, body, language }) => ({
+    name,
+    language,
+    category: 'TWILIO',
+    contentSid: sid,
+    components: [{ type: 'BODY', text: body }],
+  }));
+}
+
+/** List the connected user's approved Meta WhatsApp message templates. */
+async function listMetaWhatsAppTemplates(userId) {
   const { secret: accessToken, extraInfo } = await getDecryptedCredential(userId, 'whatsapp');
   const businessAccountId = extraInfo.business_account_id ?? env.META_WABA_ID;
   if (!businessAccountId) {

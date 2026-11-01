@@ -74,7 +74,9 @@ export class WhatsAppAdapter extends BaseAdapter {
    * reports a failure after accepting the send) skips Meta entirely.
    */
   async send(credential, recipient, message) {
-    if (message.viaTwilio) return sendWhatsAppViaTwilio(recipient, message);
+    // A Twilio trial template (it carries a ContentSid) exists only at Twilio;
+    // Meta would just reject it, so skip the guaranteed failure.
+    if (message.viaTwilio || message.template?.contentSid) return sendWhatsAppViaTwilio(recipient, message);
     try {
       return await this.#sendViaMeta(credential, recipient, message);
     } catch (err) {
