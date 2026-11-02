@@ -109,14 +109,93 @@ function dropPending(id) {
 
 /* ── Step 1: request the code ─────────────────────────────────────────── */
 
+/** auth.SentCodeType* -> where the user should look for the code. */
+const DELIVERY_BY_TYPE = {
+  'auth.SentCodeTypeApp': 'app',
+  'auth.SentCodeTypeSms': 'sms',
+  'auth.SentCodeTypeSmsWord': 'sms',
+  'auth.SentCodeTypeSmsPhrase': 'sms',
+  'auth.SentCodeTypeFirebaseSms': 'sms',
+  'auth.SentCodeTypeFragmentSms': 'fragment_sms',
+  'auth.SentCodeTypeCall': 'call',
+  'auth.SentCodeTypeFlashCall': 'flash_call',
+  'auth.SentCodeTypeMissedCall': 'missed_call',
+  'auth.SentCodeTypeEmailCode': 'email',
+  'auth.SentCodeTypeSetUpEmailRequired': 'email_setup_required',
+};
+
+/** auth.CodeType* -> what a resend would switch to. */
+const NEXT_DELIVERY_BY_TYPE = {
+  'auth.CodeTypeSms': 'sms',
+  'auth.CodeTypeCall': 'call',
+  'auth.CodeTypeFlashCall': 'flash_call',
+  'auth.CodeTypeMissedCall': 'missed_call',
+  'auth.CodeTypeFragmentSms': 'fragment_sms',
+};
+
+/**
+ * Read where Telegram actually sent the code.
+ *
+ * The library's own sendCode() collapses this to a single `isCodeViaApp`
+ * flag, which hid the cases where the code went to the login email, or was
+ * never sent at all (email setup required, paid SMS) — the UI then told the
+ * user to check their SMS for a code that wasn't coming. So the raw
+ * auth.SentCode is inspected here instead, and the non-delivery cases are
+ * turned into errors the user can act on.
+ */
+function describeSentCode(sent) {
+  if (sent instanceof Api.auth.SentCodeSuccess) {
+    throw AppError.badRequest('Telegram signed in without a code. Try again.', {
+      code: 'TELEGRAM_USER_ERROR',
+    });
+  }
+
+  if (sent?.className === 'auth.SentCodePaymentRequired') {
+    throw AppError.badRequest(
+      'Telegram wants a payment before it will send a login code by SMS to this number. ' +
+        'Sign in to the official Telegram app on this phone first — the code is then sent there for free.',
+      { code: 'TELEGRAM_CODE_PAYMENT_REQUIRED' }
+    );
+  }
+
+  const delivery = DELIVERY_BY_TYPE[sent?.type?.className] ?? 'unknown';
+
+  if (delivery === 'email_setup_required') {
+    throw AppError.badRequest(
+      'Telegram requires this account to have a login email before it sends a code to a new app. ' +
+        'In the official Telegram app open Settings → Privacy and Security → Login Email, set one, then try again.',
+      { code: 'TELEGRAM_EMAIL_SETUP_REQUIRED' }
+    );
+  }
+
+  return {
+    delivery,
+    viaApp: delivery === 'app',
+    nextDelivery: NEXT_DELIVERY_BY_TYPE[sent?.nextType?.className] ?? null,
+    // Seconds before Telegram allows a resend; absent when it doesn't say.
+    timeout: sent?.timeout ?? null,
+    ...(delivery === 'email' && sent.type.emailPattern
+      ? { emailPattern: sent.type.emailPattern }
+      : {}),
+  };
+}
+
+/** "+919876543210" -> "+91******10", for logs. */
+function maskPhone(phoneNumber) {
+  return phoneNumber.replace(/^(\+\d{2})\d+(\d{2})$/, (_, head, tail) => `${head}******${tail}`);
+}
+
 /**
  * Ask Telegram to send a login code to `phoneNumber`.
  *
- * The code arrives in the Telegram app itself when the user is signed in
- * elsewhere, and by SMS otherwise — that's Telegram's choice, not ours.
+ * Telegram picks the channel, not us: the Telegram app when the account is
+ * signed in elsewhere, otherwise SMS, a call, or the account's login email.
+ * The response says which, so the UI can tell the user where to look.
  *
  * @param {string} phoneNumber E.164, e.g. "+919876543210"
- * @returns {Promise<{ loginId: string, timeout: number }>}
+ * @returns {Promise<{ loginId: string, viaApp: boolean, delivery: string,
+ *                     nextDelivery: string|null, timeout: number|null,
+ *                     emailPattern?: string }>}
  */
 export async function startLogin(phoneNumber) {
   assertConfigured();
@@ -126,20 +205,75 @@ export async function startLogin(phoneNumber) {
   try {
     await client.connect();
 
-    const { phoneCodeHash, isCodeViaApp } = await client.sendCode(
-      { apiId: env.TELEGRAM_API_ID, apiHash: env.TELEGRAM_API_HASH },
-      phoneNumber
+    const sent = await client.invoke(
+      new Api.auth.SendCode({
+        phoneNumber,
+        apiId: env.TELEGRAM_API_ID,
+        apiHash: env.TELEGRAM_API_HASH,
+        settings: new Api.CodeSettings({}),
+      })
     );
+
+    console.log(
+      `[telegram:user] login code for ${maskPhone(phoneNumber)}: ${sent?.className} ` +
+        `type=${sent?.type?.className ?? '-'} next=${sent?.nextType?.className ?? '-'}`
+    );
+
+    const described = describeSentCode(sent);
 
     // Random, unguessable, and meaningless outside this process — it is a
     // lookup key, never a credential.
     const loginId = crypto.randomUUID();
-    putPending(loginId, { client, phoneNumber, phoneCodeHash });
+    putPending(loginId, { client, phoneNumber, phoneCodeHash: sent.phoneCodeHash });
 
-    return { loginId, viaApp: Boolean(isCodeViaApp) };
+    return { loginId, ...described };
   } catch (error) {
     await client.disconnect().catch(() => {});
     throw toAppError(error, 'Could not start the Telegram login.');
+  }
+}
+
+/**
+ * Ask Telegram to send the code again, by its next channel (usually SMS
+ * after an in-app code). For when the user can't see the first one.
+ *
+ * Telegram answers SEND_CODE_UNAVAILABLE when it has no other channel left,
+ * and FLOOD_WAIT when asked too soon; both map to readable errors below.
+ *
+ * @param {string} loginId from startLogin()
+ */
+export async function resendLogin(loginId) {
+  const pending = takePending(loginId);
+
+  if (!pending) {
+    throw AppError.badRequest(
+      'That login has expired. Request a new code and try again.',
+      { code: 'TELEGRAM_LOGIN_EXPIRED' }
+    );
+  }
+
+  const { client, phoneNumber, phoneCodeHash } = pending;
+
+  try {
+    if (!client.connected) await client.connect();
+
+    const sent = await client.invoke(new Api.auth.ResendCode({ phoneNumber, phoneCodeHash }));
+
+    console.log(
+      `[telegram:user] resent login code for ${maskPhone(phoneNumber)}: ${sent?.className} ` +
+        `type=${sent?.type?.className ?? '-'} next=${sent?.nextType?.className ?? '-'}`
+    );
+
+    const described = describeSentCode(sent);
+
+    // The resend issues a new hash; the old one no longer signs in.
+    putPending(loginId, { ...pending, phoneCodeHash: sent.phoneCodeHash });
+
+    return { loginId, ...described };
+  } catch (error) {
+    // The first code may still be valid — keep the login so the user can enter it.
+    putPending(loginId, pending);
+    throw toAppError(error, 'Could not resend the Telegram code.');
   }
 }
 
@@ -259,6 +393,8 @@ const MESSAGES = {
   SESSION_PASSWORD_NEEDED: 'This account has two-step verification enabled.',
   PHONE_NUMBER_FLOOD: 'Too many login attempts for this number. Wait a while before trying again.',
   AUTH_RESTART: 'Telegram asked us to restart the login. Request a new code.',
+  SEND_CODE_UNAVAILABLE: 'Telegram has no other way to send the code right now. Check the Telegram app on your other devices, or start again later.',
+  PHONE_NUMBER_UNOCCUPIED: 'No Telegram account uses this phone number. Sign up in the Telegram app first.',
 };
 
 export function toAppError(error, fallback) {

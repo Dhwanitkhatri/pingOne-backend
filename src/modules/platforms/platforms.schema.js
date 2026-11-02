@@ -74,6 +74,11 @@ export const telegramUserCancelSchema = z.object({
   loginId: z.string().uuid(),
 });
 
+/** Re-sending the code of a half-finished login, by Telegram's next channel. */
+export const telegramUserResendSchema = z.object({
+  loginId: z.string().uuid('loginId must come from the start step'),
+});
+
 // Google / Gmail (OAuth2): the long-lived refresh token is the secret we
 // persist; the short-lived access token is re-derived when sending and is
 // intentionally NOT stored in plaintext extra_info.

@@ -7,6 +7,7 @@
 //   POST   /platforms/telegram   connect a Telegram bot (manual token)
 //   POST   /platforms/telegram/user/start   MTProto login: request a code
 //   POST   /platforms/telegram/user/verify  MTProto login: submit code/2FA
+//   POST   /platforms/telegram/user/resend  MTProto login: resend by next channel
 //   POST   /platforms/telegram/user/cancel  abandon a half-finished login
 //   POST   /platforms/twilio     connect Twilio / SMS (manual credentials)
 //   POST   /platforms/whatsapp   connect WhatsApp Cloud API (manual token)
@@ -26,6 +27,7 @@ import {
   telegramUserStartSchema,
   telegramUserVerifySchema,
   telegramUserCancelSchema,
+  telegramUserResendSchema,
   googleSchema,
   twilioSchema,
   platformCodeParamSchema,
@@ -54,6 +56,11 @@ router.post(
   '/telegram/user/verify',
   validate({ body: telegramUserVerifySchema }),
   controller.verifyTelegramUser
+);
+router.post(
+  '/telegram/user/resend',
+  validate({ body: telegramUserResendSchema }),
+  controller.resendTelegramUser
 );
 router.post(
   '/telegram/user/cancel',

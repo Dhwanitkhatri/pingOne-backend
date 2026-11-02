@@ -390,6 +390,14 @@ export function startTelegramUserLogin(_userId, { phoneNumber }) {
 }
 
 /**
+ * Step 1b: the user can't find the code — ask Telegram to send it again by
+ * its next channel (usually SMS after an in-app code).
+ */
+export function resendTelegramUserLogin(_userId, { loginId }) {
+  return telegramUser.resendLogin(loginId);
+}
+
+/**
  * Step 2: submit the code (plus the 2FA password when the account has one)
  * and persist the resulting session.
  *

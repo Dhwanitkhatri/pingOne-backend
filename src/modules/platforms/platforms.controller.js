@@ -57,6 +57,12 @@ export const verifyTelegramUser = asyncHandler(async (req, res) => {
   res.status(200).json({ message: 'Telegram account connected', credential });
 });
 
+/** POST /platforms/telegram/user/resend — send the code again by the next channel. */
+export const resendTelegramUser = asyncHandler(async (req, res) => {
+  const result = await service.resendTelegramUserLogin(req.user.id, req.body);
+  res.status(200).json({ message: 'Telegram sent a new login code', ...result });
+});
+
 /** POST /platforms/telegram/user/cancel — drop a half-finished login. */
 export const cancelTelegramUser = asyncHandler(async (req, res) => {
   const result = await service.cancelTelegramUserLogin(req.user.id, req.body);
