@@ -42,7 +42,7 @@ router.patch(
 // Each press is a real email, so keep it to a handful per quarter-hour.
 const digestNowLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 3,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
