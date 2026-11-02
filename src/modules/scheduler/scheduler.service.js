@@ -113,13 +113,28 @@ export async function updateSchedule(userId, jobId, patch) {
   });
 }
 
-/** Cancels a job that hasn't fired yet. Jobs with existing deliveries can't be deleted (FK is NoAction). */
+/**
+ * Cancels a job that hasn't fired yet. Jobs with existing deliveries can't be
+ * deleted (FK is NoAction) — except that a repeating job which has already
+ * sent is STOPPED instead: marked cancelled with no next run, so the scheduler
+ * never picks it up again while the sends it made stay in the history.
+ * Without this a repeating message could never be switched off.
+ */
 export async function cancelSchedule(userId, jobId) {
   const existing = await prisma.scheduledJob.findFirst({
     where: { id: jobId, userId },
     include: { deliveries: { select: { id: true }, take: 1 } },
   });
   if (!existing) throw AppError.notFound('Scheduled job not found');
+
+  if (existing.deliveries.length > 0 && existing.recurrenceRuleId && existing.nextRunAt) {
+    const cancelledStatus = await lookupByCode('messageStatus', MESSAGE_STATUS.CANCELLED);
+    await prisma.scheduledJob.update({
+      where: { id: jobId },
+      data: { statusId: cancelledStatus.id, nextRunAt: null },
+    });
+    return;
+  }
 
   if (existing.deliveries.length > 0) {
     throw AppError.badRequest('This job has already started sending and cannot be cancelled', {
@@ -145,7 +160,7 @@ export async function cancelSchedule(userId, jobId) {
  */
 export async function sendOrSchedule(
   userId,
-  { messageId, subject, content, templateId, scheduledAt, recipients, skipIfReplied }
+  { messageId, subject, content, templateId, scheduledAt, recurrence, recipients, skipIfReplied }
 ) {
   const when = scheduledAt ?? new Date();
   const immediate = when.getTime() <= Date.now();
@@ -159,7 +174,9 @@ export async function sendOrSchedule(
     messageId,
     message: messageId ? undefined : { subject, content, templateId },
     scheduledAt: when,
-    recurrence: undefined, // the composer only creates one-time sends
+    // The composer's "Repeat". An immediate send with a rule fires now and
+    // fireJob() then works out the next run, same as a scheduled one.
+    recurrence,
     recipients,
     skipIfReplied: skipIfReplied ?? false,
   });

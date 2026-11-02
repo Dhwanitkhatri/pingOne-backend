@@ -91,6 +91,7 @@ export const sendMessageSchema = z
     content: z.string().trim().min(1).max(10000).optional(),
     templateId: z.number().int().positive().optional(),
     scheduledAt: z.coerce.date().optional(),
+    recurrence: recurrenceSchema.optional(), // the composer's "Repeat"; omit for a one-time send
     skipIfReplied: z.boolean().default(false),
     recipients: z.array(recipientSchema).min(1, 'At least one recipient is required'),
   })
