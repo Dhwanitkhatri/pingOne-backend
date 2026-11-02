@@ -89,13 +89,34 @@ async function recordWhatsAppReply(message) {
   });
   if (!contacts.length) return false;
 
+  const repliedAt = parseUnixSeconds(message.timestamp);
   await prisma.contactReply.createMany({
     data: contacts.map((contact) => ({
       contactId: contact.id,
       platformId: whatsapp.id,
-      repliedAt: parseUnixSeconds(message.timestamp),
+      repliedAt,
     })),
   });
+
+  // A reply proves they saw it — and it's the only read signal when the
+  // recipient has read receipts switched off, since Meta then never sends
+  // `read`. Most recent send only, as for Twilio and Telegram.
+  const delivery = await prisma.messageDelivery.findFirst({
+    where: {
+      platformId: whatsapp.id,
+      contactId: { in: contacts.map((contact) => contact.id) },
+      sentAt: { not: null },
+    },
+    orderBy: { sentAt: 'desc' },
+  });
+  if (delivery) {
+    await transitionStatus({
+      deliveryId: delivery.id,
+      toCode: MESSAGE_STATUS.READ,
+      changedBy: CHANGED_BY.WEBHOOK,
+      occurredAt: repliedAt,
+    });
+  }
   return true;
 }
 
